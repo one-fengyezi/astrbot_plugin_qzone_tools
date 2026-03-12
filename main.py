@@ -7,6 +7,7 @@ import traceback
 import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
+from urllib.parse import urlencode  # 移到顶部，符合 PEP 8
 
 import aiohttp
 from astrbot.api import logger
@@ -47,7 +48,7 @@ class QzoneSession:
             try:
                 creds = await client.api.call_action('get_credentials', domain='qzone.qq.com')
                 self.cookie = creds.get('cookies', '')
-            except:
+            except Exception:  # 修复：指定具体异常类型，避免捕获系统级异常
                 cookies = await client.api.call_action('get_cookies', domain='qzone.qq.com')
                 self.cookie = cookies.get('cookies', '')
             
@@ -104,8 +105,7 @@ class QzoneAPI:
                 'qzreferrer': f'https://user.qzone.qq.com/{self.session.uin}/infocenter',
             }
             
-            from urllib.parse import urlencode
-            encoded_data = urlencode(payload)
+            encoded_data = urlencode(payload)  # 使用顶部导入的函数
             
             headers = {
                 'Content-Type': 'application/x-www-form-urlencoded',
@@ -140,7 +140,7 @@ class QzoneAPI:
                             result = json.loads(json_str)
                             if result.get('code') == 0:
                                 return {"success": True, "msg": "发表成功", "data": result}
-                    except:
+                    except Exception:  # 修复：指定具体异常类型
                         pass
                     
                     if resp.status == 200 and len(response_text) > 500:
@@ -172,23 +172,7 @@ class QzoneToolsPlugin(Star):
     
     def __init__(self, context: Context, config: AstrBotConfig = None):
         super().__init__(context)
-        
-        # 读取配置
-        if config is None:
-            config = {}
-        elif hasattr(config, 'get'):
-            pass
-        else:
-            config = {}
-        
-        self.config = config
-        self.enabled = config.get("enabled", True) if isinstance(config, dict) else getattr(config, 'get', lambda x, y: y)("enabled", True)
-        
-        # 如果未启用，跳过初始化
-        if not self.enabled:
-            logger.info("[QzoneTools] 插件已禁用，跳过初始化")
-            return
-        
+        self.config = config or {}
         self.session = QzoneSession()
         self.qzone = QzoneAPI(self.session)
         self._client = None
@@ -205,15 +189,10 @@ class QzoneToolsPlugin(Star):
     
     async def initialize(self):
         """插件初始化"""
-        if not self.enabled:
-            return
         logger.info("[QzoneTools] 插件已加载")
     
     async def terminate(self):
         """插件卸载"""
-        if not self.enabled:
-            return
-        
         # 取消所有定时任务
         for task_id, task in self.running_tasks.items():
             task.cancel()
@@ -221,17 +200,8 @@ class QzoneToolsPlugin(Star):
                 self.scheduled_tasks[task_id].cancelled = True
         logger.info("[QzoneTools] 插件已卸载")
     
-    def _check_enabled(self):
-        """检查插件是否启用"""
-        if not self.enabled:
-            return False
-        return True
-    
     async def _get_client(self, event: AstrMessageEvent):
         """获取NapCat客户端"""
-        if not self._check_enabled():
-            return None
-            
         if self._client:
             return self._client
         
@@ -247,9 +217,6 @@ class QzoneToolsPlugin(Star):
     
     async def _ensure_initialized(self, event: AstrMessageEvent) -> bool:
         """确保QQ空间已初始化"""
-        if not self._check_enabled():
-            return False
-            
         if self.session.initialized:
             return True
         client = await self._get_client(event)
@@ -259,9 +226,6 @@ class QzoneToolsPlugin(Star):
     
     async def _update_contacts_cache(self, client):
         """更新联系人缓存"""
-        if not self._check_enabled():
-            return
-            
         now = time.time()
         if now - self._cache_time < self._cache_expire and (self._groups_cache or self._friends_cache):
             return
@@ -299,9 +263,6 @@ class QzoneToolsPlugin(Star):
             keyword(string): 搜索关键词，如群名、群号、好友昵称等
             search_type(string): 搜索类型，"group"(仅群聊)、"private"(仅私聊)、"all"(全部，默认)
         """
-        if not self._check_enabled():
-            return "错误：插件已禁用"
-            
         try:
             client = await self._get_client(event)
             if not client:
@@ -361,6 +322,15 @@ class QzoneToolsPlugin(Star):
             logger.error(f"[QzoneTools] 搜索联系人失败: {e}")
             return f"搜索失败：{str(e)}"
     
+    def _validate_target_id(self, target_id: str) -> tuple[bool, str]:
+        """验证目标ID是否为纯数字格式"""
+        target_id = str(target_id).strip()
+        if not target_id:
+            return False, "目标ID不能为空"
+        if not target_id.isdigit():
+            return False, f"目标ID必须是纯数字，收到：'{target_id}'。请确保传入正确的QQ号或群号，不包含任何文字"
+        return True, target_id
+    
     @filter.llm_tool(name="send_message")
     async def send_message_tool(self, event: AstrMessageEvent, target_id: str, message: str, chat_type: str = "auto"):
         """
@@ -372,18 +342,20 @@ class QzoneToolsPlugin(Star):
             message(string): 要发送的消息内容
             chat_type(string): 类型，"group"(群聊)、"private"(私聊)、"auto"(自动判断，默认auto)
         """
-        if not self._check_enabled():
-            return "错误：插件已禁用"
-            
         try:
             client = await self._get_client(event)
             if not client:
                 return "错误：无法获取NapCat客户端"
             
-            if chat_type == "auto":
-                chat_type = "group"
+            # 修复：严格验证输入类型，防止LLM幻觉导致转换错误
+            is_valid, result = self._validate_target_id(target_id)
+            if not is_valid:
+                return f"❌ 参数错误：{result}"
+            target_id = result
             
-            target_id = str(target_id).strip()
+            if chat_type == "auto":
+                # 默认群聊，因为主动私聊容易被风控
+                chat_type = "group"
             
             # 发送消息
             if chat_type == "group":
@@ -410,13 +382,16 @@ class QzoneToolsPlugin(Star):
             send_time(string): 发送时间，格式"2026-03-13 08:00:00"或"明天 08:00"或"30分钟后"
             chat_type(string): 类型，"group"(群聊)或"private"(私聊)，默认group
         """
-        if not self._check_enabled():
-            return "错误：插件已禁用"
-            
         try:
             client = await self._get_client(event)
             if not client:
                 return "错误：无法获取NapCat客户端"
+            
+            # 修复：严格验证target_id
+            is_valid, result = self._validate_target_id(target_id)
+            if not is_valid:
+                return f"❌ 参数错误：{result}"
+            target_id = result
             
             # 解析时间
             parsed_time = self._parse_time(send_time)
@@ -433,7 +408,7 @@ class QzoneToolsPlugin(Star):
             # 创建任务对象
             task = ScheduledTask(
                 task_id=task_id,
-                target_id=str(target_id),
+                target_id=target_id,  # 已验证为纯数字
                 message=message,
                 send_time=parsed_time,
                 chat_type=chat_type
@@ -538,6 +513,12 @@ class QzoneToolsPlugin(Star):
                 task.completed = True
                 return
             
+            # 修复：再次验证target_id安全性
+            if not task.target_id.isdigit():
+                logger.error(f"[QzoneTools] 定时任务 {task_id} 失败：无效的target_id格式 '{task.target_id}'")
+                task.completed = True
+                return
+            
             # 发送消息
             if task.chat_type == "group":
                 await client.api.call_action('send_group_msg', 
@@ -572,9 +553,6 @@ class QzoneToolsPlugin(Star):
         Args:
             task_id(string): 定时任务的ID（创建时返回的8位字符）
         """
-        if not self._check_enabled():
-            return "错误：插件已禁用"
-            
         try:
             task_id = task_id.strip()
             
@@ -609,9 +587,6 @@ class QzoneToolsPlugin(Star):
         Args:
             show_all(boolean): 是否显示已完成的，默认False只显示待执行的
         """
-        if not self._check_enabled():
-            return "错误：插件已禁用"
-            
         try:
             now = datetime.now()
             active_tasks = []
@@ -659,9 +634,6 @@ class QzoneToolsPlugin(Star):
         Args:
             content(string): 说说文字内容
         """
-        if not self._check_enabled():
-            return "错误：插件已禁用"
-            
         if not await self._ensure_initialized(event):
             return "错误：无法初始化QQ空间，请检查NapCat是否已登录"
         
@@ -684,9 +656,6 @@ class QzoneToolsPlugin(Star):
             target_qq(string): 目标QQ号
             chat_type(string): 类型，private/group/auto
         """
-        if not self._check_enabled():
-            return "错误：插件已禁用"
-            
         try:
             client = await self._get_client(event)
             if not client:
@@ -698,7 +667,11 @@ class QzoneToolsPlugin(Star):
                 else:
                     chat_type = "group"
             
-            target_qq = str(target_qq).strip()
+            # 修复：验证QQ号格式
+            is_valid, result = self._validate_target_id(target_qq)
+            if not is_valid:
+                return f"❌ 参数错误：{result}"
+            target_qq = result
             
             if chat_type == "private":
                 await client.api.call_action('friend_poke', user_id=int(target_qq))
@@ -715,12 +688,5 @@ class QzoneToolsPlugin(Star):
             return f"发送失败：{str(e)}"
 
 
-# 配置文件结构
-CONFIG_SCHEMA = {
-    "enabled": {
-        "description": "是否启用插件功能",
-        "type": "bool",
-        "default": True,
-        "hint": "关闭后插件所有功能将不可用"
-    }
-}
+# 配置文件结构（供AstrBot WebUI使用）
+CONFIG_SCHEMA = {}
