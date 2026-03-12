@@ -7,7 +7,7 @@ import traceback
 import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
-from urllib.parse import urlencode  # 移到顶部，符合 PEP 8
+from urllib.parse import urlencode  # 修复：移到顶部，符合 PEP 8
 
 import aiohttp
 from astrbot.api import logger
@@ -105,7 +105,7 @@ class QzoneAPI:
                 'qzreferrer': f'https://user.qzone.qq.com/{self.session.uin}/infocenter',
             }
             
-            encoded_data = urlencode(payload)  # 使用顶部导入的函数
+            encoded_data = urlencode(payload)
             
             headers = {
                 'Content-Type': 'application/x-www-form-urlencoded',
