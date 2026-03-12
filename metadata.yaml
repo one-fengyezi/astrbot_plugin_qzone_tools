@@ -1,0 +1,6 @@
+# metadata.yaml
+name: "qzone_tools"
+author: "Wyccotccy"
+desc: "QQ空间与消息工具插件：发表说说、戳一戳、联系人搜索、主动发消息、定时消息"
+version: "1.0.0"
+repo: "https://github.com/Wyccotccy/astrbot_plugin_qzone_tools"
