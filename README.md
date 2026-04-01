@@ -1,7 +1,5 @@
 # QzoneTools - AstrBot QQ空间与消息工具插件
 
-[![GitHub](https://img.shields.io/badge/GitHub-Repository-blue)](https://github.com/Wyccotccy/astrbot_plugin_qzone_tools)
-
 为 AstrBot 提供完整的 QQ 空间操作、消息管理与QQ状态控制功能。
 
 ## 功能特性
@@ -16,6 +14,7 @@
 | 🕐 **定时指令** | 高级定时任务（支持发空间、改状态、LLM提醒，持久化存储） | ✅ 可用 |
 | 🌐 **QQ状态管理** | 设置在线状态（在线/Q我吧/离开/忙碌/隐身/听歌中/睡觉中等） | ✅ 可用 |
 | ↩️ **消息撤回** | 群聊中通过引用消息撤回（仅支持群聊） | ✅ 可用 |
+| 📧 **发送邮件** | 通过QQ邮箱发送邮件 | ✅ 可用 |
 
 ## 安装方法
 
@@ -28,131 +27,139 @@
 3. 重启或重载插件
 
 ### 方式三：Git安装
-```bash
-# 在AstrBot插件目录执行
-cd /AstrBot/data/plugins
-git clone https://github.com/Wyccotccy/astrbot_plugin_qzone_tools.git
-```
+    # 在AstrBot插件目录执行
+    cd /AstrBot/data/plugins
+    git clone https://github.com/Wyccotccy/astrbot_plugin_qzone_tools.git
 
 ## 使用方法
 
-> ⚠️ **重要提示**：为了获得最佳体验，建议在 **系统提示词（System Prompt）** 或 **人格设定** 中提醒 LLM 本插件的功能，这样 LLM 会主动调用这些工具。
+⚠️ 重要提示：为了获得最佳体验，建议在 系统提示词（System Prompt） 或 人格设定 中提醒 LLM 本插件的功能，这样 LLM 会主动调用这些工具。
 
 ### 推荐系统提示词
 
-在你的 AstrBot 配置中，添加以下提示词到 **系统提示词** 或 **人格设定**：
+在你的 AstrBot 配置中，添加以下提示词到 系统提示词 或 人格设定：
 
-```text
-你拥有以下工具能力，在适当场景下请主动调用：
+    你拥有以下工具能力，在适当场景下请主动调用：
 
-1. **QQ空间操作**：你可以帮用户发表QQ空间说说，当用户提到"发空间"、"发动态"、"发朋友圈"时，主动调用 publish_qzone 工具。
+    1. **QQ空间操作**：你可以帮用户发表QQ空间说说，当用户提到"发空间"、"发动态"、"发朋友圈"时，主动调用 publish_qzone 工具。
 
-2. **戳一戳**：你可以发送戳一戳提醒用户，当用户说"戳一下"、"提醒他"、"打个招呼"时，调用 send_poke。
+    2. **戳一戳**：你可以发送戳一戳提醒用户，当用户说"戳一下"、"提醒他"、"打个招呼"时，调用 send_poke。
 
-3. **联系人搜索**：你可以搜索群聊和好友（支持通过名字或QQ号模糊匹配），当用户需要找某个群或某人时，调用 search_contacts。
-   - 注意：搜索时使用简短关键词即可，不需要同时提供名字和QQ号
+    3. **联系人搜索**：你可以搜索群聊和好友（支持通过名字或QQ号模糊匹配），当用户需要找某个群或某人时，调用 search_contacts。
+       - 注意：搜索时使用简短关键词即可，不需要同时提供名字和QQ号
 
-4. **主动发消息**：你可以向指定群或好友发送消息，当用户要求"通知大家"、"发消息给XX"时，先搜索联系人，再调用 send_message。
+    4. **主动发消息**：你可以向指定群或好友发送消息，当用户要求"通知大家"、"发消息给XX"时，先搜索联系人，再调用 send_message。
 
-5. **定时消息**：你可以创建定时提醒任务，当用户说"明天提醒我"、"定时发送"、"8点叫醒我"时，调用 schedule_message。
-   - 支持格式："明天 08:00"、"30分钟后"、"2026-03-15 14:00"、"每天的08:00"
+    5. **定时消息**：你可以创建定时提醒任务，当用户说"明天提醒我"、"定时发送"、"8点叫醒我"时，调用 schedule_message。
+       - 支持格式："明天 08:00"、"30分钟后"、"2026-03-15 14:00"、"每天的08:00"
 
-6. **定时指令（高级）**：你可以创建更复杂的定时任务，包括：
-   - 定时发表QQ空间说说（qzone_post）
-   - 定时更改QQ状态（status_change）
-   - 定时发送消息（send_message）
-   - 定时LLM提醒，到时间后由你回复用户（llm_remind）
-   - 使用 create_scheduled_command 创建，支持持久化存储，重启后仍然有效
+    6. **定时指令（高级）**：你可以创建更复杂的定时任务，包括：
+       - 定时发表QQ空间说说（qzone_post）
+       - 定时更改QQ状态（status_change）
+       - 定时发送消息（send_message）
+       - 定时LLM提醒，到时间后由你回复用户（llm_remind）
+       - 使用 create_scheduled_command 创建，支持持久化存储，重启后仍然有效
 
-7. **QQ状态管理**：你可以帮用户设置QQ在线状态，当用户说"我要隐身"、"设置忙碌状态"、"显示听歌中"时，调用 update_qq_status。
-   - 基础状态：在线、Q我吧、离开、忙碌、请勿打扰、隐身
-   - 娱乐状态：听歌中、睡觉中、学习中
-   - 支持定时自动恢复在线状态
+    7. **QQ状态管理**：你可以帮用户设置QQ在线状态，当用户说"我要隐身"、"设置忙碌状态"、"显示听歌中"时，调用 update_qq_status。
+       - 基础状态：在线、Q我吧、离开、忙碌、请勿打扰、隐身
+       - 娱乐状态：听歌中、睡觉中、学习中
+       - 支持定时自动恢复在线状态
 
-8. **消息撤回**：在群聊中，你可以帮用户撤回消息。当用户引用一条消息并说"撤回这条"、"删掉这个"时，调用 recall_by_reply。
-   - 注意：仅支持群聊，且必须在2分钟内撤回
+    8. **消息撤回**：在群聊中，你可以帮用户撤回消息。当用户引用一条消息并说"撤回这条"、"删掉这个"时，调用 recall_by_reply。
+       - 注意：仅支持群聊，且必须在2分钟内撤回
 
-注意：
-- 发表说说和主动发消息需要确保 NapCat 已登录且状态正常
-- 定时指令（create_scheduled_command）比定时消息（schedule_message）功能更强大且数据持久化
-- 撤回消息功能仅支持群聊中通过引用方式撤回
-```
+    9. **QQ邮箱发送**：你可以通过QQ邮箱发送邮件，当用户说"发邮件"、"发送邮件给xxx"、"给xx发一封邮件"时，调用 send_email。
+       - 需要提前在插件配置中填写发件人QQ邮箱和授权码
+       - 支持发送纯文本邮件和HTML邮件
 
-### 使用示例
+    注意：
+    - 发表说说和主动发消息需要确保 NapCat 已登录且状态正常
+    - 定时指令（create_scheduled_command）比定时消息（schedule_message）功能更强大且数据持久化
+    - 撤回消息功能仅支持群聊中通过引用方式撤回
+    - 发送邮件功能需要在插件配置文件中填写发件人邮箱和授权码
 
-#### 1. 发表QQ空间说说
-**用户**："帮我发条空间说说，今天天气真好"  
-**LLM**：调用 `publish_qzone` → 成功发表
+## 使用示例
 
-#### 2. 戳一戳提醒
-**用户**："戳一下刚才说话的那个人"  
-**LLM**：调用 `send_poke` → 发送窗口抖动
+### 1. 发表QQ空间说说
+用户："帮我发条空间说说，今天天气真好"
+LLM：调用 publish_qzone → 成功发表
 
-#### 3. 搜索联系人
-**用户**："找一下通知群"  
-**LLM**：调用 `search_contacts(keyword="通知")` → 返回匹配的群列表
+### 2. 戳一戳提醒
+用户："戳一下刚才说话的那个人"
+LLM：调用 send_poke → 发送窗口抖动
 
-**用户**："搜索QQ号123456"  
-**LLM**：调用 `search_contacts(keyword="123456")` → 返回匹配的好友或群
+### 3. 搜索联系人
+用户："找一下通知群"
+LLM：调用 search_contacts(keyword="通知") → 返回匹配的群列表
 
-#### 4. 主动发消息
-**用户**："给刚才那个群发个通知，说会议取消了"  
-**LLM**：
+用户："搜索QQ号123456"
+LLM：调用 search_contacts(keyword="123456") → 返回匹配的好友或群
+
+### 4. 主动发消息
+用户："给刚才那个群发个通知，说会议取消了"
+LLM：
 1. 从上下文获取群ID
-2. 调用 `send_message` → 发送"会议取消了"
+2. 调用 send_message → 发送"会议取消了"
 
-#### 5. 定时消息（内存存储，重启丢失）
-**用户**："明天早上8点叫我起床"  
-**LLM**：
+### 5. 定时消息（内存存储，重启丢失）
+用户："明天早上8点叫我起床"
+LLM：
 1. 询问或确认目标（私聊还是某个群）
-2. 调用 `schedule_message(send_time="明天 08:00")` → 创建任务
+2. 调用 schedule_message(send_time="明天 08:00") → 创建任务
 3. 返回任务ID供后续管理
 
-**管理定时任务**：
-- "查看我的定时任务" → `list_scheduled_messages`
-- "取消任务 abc123" → `cancel_scheduled_message`
+**管理定时任务：**
+- "查看我的定时任务" → list_scheduled_messages
+- "取消任务 abc123" → cancel_scheduled_message
 
-#### 6. 定时指令（持久化存储，重启保留）
-**用户**："每天晚上10点自动发一条空间说说'晚安'"  
-**LLM**：
-1. 调用 `create_scheduled_command`，设置 command_type="qzone_post"，recurrence="daily"
+### 6. 定时指令（持久化存储，重启保留）
+用户："每天晚上10点自动发一条空间说说'晚安'"
+LLM：
+1. 调用 create_scheduled_command，设置 command_type="qzone_post"，recurrence="daily"
 2. 返回任务ID
 
-**用户**："30分钟后提醒我喝水"  
-**LLM**：
-1. 调用 `create_scheduled_command`，设置 command_type="llm_remind"
+用户："30分钟后提醒我喝水"
+LLM：
+1. 调用 create_scheduled_command，设置 command_type="llm_remind"
 2. 到时间后LLM会收到提醒并回复用户
 
-**管理定时指令**：
-- "查看所有定时指令" → `list_scheduled_commands`
-- "取消指令 xxx" → `cancel_scheduled_command`
-- "删除指令 xxx" → `delete_scheduled_command`（彻底删除记录）
+**管理定时指令：**
+- "查看所有定时指令" → list_scheduled_commands
+- "取消指令 xxx" → cancel_scheduled_command
+- "删除指令 xxx" → delete_scheduled_command（彻底删除记录）
 
-#### 7. QQ状态管理
-**用户**："我要隐身玩游戏"  
-**LLM**：调用 `update_qq_status(status="invisible", duration_minutes=60)` → 设置隐身状态，1小时后自动恢复在线
+### 7. QQ状态管理
+用户："我要隐身玩游戏"
+LLM：调用 update_qq_status(status="invisible", duration_minutes=60) → 设置隐身状态，1小时后自动恢复在线
 
-**用户**："设置成听歌中状态"  
-**LLM**：调用 `update_qq_status(status="listening", duration_minutes=120)` → 显示听歌中状态
+用户："设置成听歌中状态"
+LLM：调用 update_qq_status(status="listening", duration_minutes=120) → 显示听歌中状态
 
-**查看当前状态**：
-- "我现在是什么状态" → `get_qq_status`
+**查看当前状态：**
+- "我现在是什么状态" → get_qq_status
 
-#### 8. 群聊消息撤回
-**用户**：[引用一条消息] "撤回这条消息"  
-**LLM**：调用 `recall_by_reply` → 撤回引用的消息
+### 8. 群聊消息撤回
+用户：[引用一条消息] "撤回这条消息"
+LLM：调用 recall_by_reply → 撤回引用的消息
 
-**注意**：
+**注意：**
 - 仅支持群聊
 - 必须在消息发送后2分钟内撤回
 - 必须通过引用消息方式调用
 
+### 9. 发送邮件
+用户："给 friend@qq.com 发一封邮件，主题是'测试'，内容说'你好，这是测试邮件'"
+LLM：调用 send_email(recipient="friend@qq.com", subject="测试", body="你好，这是测试邮件") → 发送成功
+
+用户："发送一封HTML格式的邮件，收件人是 admin@example.com，内容是带链接的"
+LLM：调用 send_email(recipient="admin@example.com", subject="HTML邮件", body="<a href='https://example.com'>点击链接</a>", is_html=True)
+
 ## 注意事项
 
 ### 1. NapCat 兼容性
-- 需要 NapCat 支持 `get_credentials` 或 `get_cookies` API 来获取 QQ 空间 Cookie
+- 需要 NapCat 支持 get_credentials 或 get_cookies API 来获取 QQ 空间 Cookie
 - 如果发表说说失败，请检查 NapCat 日志确认是否成功获取 Cookie
-- 消息撤回功能需要 NapCat 支持 `delete_msg` API
+- 消息撤回功能需要 NapCat 支持 delete_msg API
 
 ### 2. Cookie 有效期
 - QQ 空间 Cookie 通常几天到几周会过期
@@ -164,8 +171,9 @@ git clone https://github.com/Wyccotccy/astrbot_plugin_qzone_tools.git
 - 频繁戳一戳可能触发频率限制
 
 ### 4. 定时任务区别
+
 | 特性 | 定时消息 (schedule_message) | 定时指令 (create_scheduled_command) |
-|------|---------------------------|----------------------------------|
+|------|----------------------------|-----------------------------------|
 | 存储方式 | 内存 | JSON文件持久化 |
 | 重启保留 | ❌ 丢失 | ✅ 保留 |
 | 功能范围 | 仅发送消息 | 发空间、改状态、发消息、LLM提醒 |
@@ -177,68 +185,83 @@ git clone https://github.com/Wyccotccy/astrbot_plugin_qzone_tools.git
 - 状态数据持久化存储，重启后会自动恢复之前的设置
 
 ### 6. 撤回功能限制
-- **仅支持群聊**，私聊无法使用
-- 必须通过**引用消息**方式触发，不支持关键词搜索撤回
+- 仅支持群聊，私聊无法使用
+- 必须通过引用消息方式触发，不支持关键词搜索撤回
 - 超过2分钟的消息无法撤回
 - 需要机器人有相应权限（管理员或消息发送者）
+
+### 7. 邮件发送配置
+- 需要先在插件配置文件中填写发件人QQ邮箱地址和授权码（SMTP密码）
+- 授权码获取方式：登录QQ邮箱 → 设置 → 账户 → POP3/IMAP/SMTP服务 → 生成授权码
+- 邮件发送使用QQ邮箱的SMTP服务器（smtp.qq.com:587，支持TLS）
+- 如果发送失败，请检查授权码是否正确，以及是否开启了SMTP服务
 
 ## 故障排查
 
 ### 发表说说失败
-**现象**：返回"Cookie无效"或"返回HTML页面"  
-**解决**：
+**现象：** 返回"Cookie无效"或"返回HTML页面"
+**解决：**
 1. 检查 NapCat 是否已登录
-2. 检查 NapCat 版本是否支持 `get_credentials` API
+2. 检查 NapCat 版本是否支持 get_credentials API
 3. 尝试重新登录 NapCat 刷新 Cookie
 
 ### 搜索联系人为空
-**现象**：返回"未找到联系人"  
-**解决**：
+**现象：** 返回"未找到联系人"
+**解决：**
 1. 确认关键词正确（支持模糊搜索名字或QQ号）
 2. 检查 NapCat 是否能正常获取群列表/好友列表
 3. 等待5分钟后重试（缓存过期）
 
 ### 定时任务未执行
-**现象**：到时间后没有发送消息  
-**解决**：
-- 如果是 `schedule_message`：检查插件是否重启（重启会丢失任务）
-- 如果是 `create_scheduled_command`：检查日志，确认任务是否被加载
+**现象：** 到时间后没有发送消息
+**解决：**
+- 如果是 schedule_message：检查插件是否重启（重启会丢失任务）
+- 如果是 create_scheduled_command：检查日志，确认任务是否被加载
 - 确认目标ID（群号/QQ号）在发送时仍然有效
 
 ### 撤回消息失败
-**现象**：返回"消息ID解析失败"或"无权撤回"  
-**解决**：
+**现象：** 返回"消息ID解析失败"或"无权撤回"
+**解决：**
 1. 确认消息在2分钟内
 2. 确认在群聊中使用（私聊不支持）
 3. 确认通过引用消息方式调用
 4. 检查机器人是否有管理员权限（针对非自己发送的消息）
 
 ### QQ状态设置失败
-**现象**：返回"设置失败"  
-**解决**：
-1. 检查 NapCat 版本是否支持 `set_online_status` API
+**现象：** 返回"设置失败"
+**解决：**
+1. 检查 NapCat 版本是否支持 set_online_status API
 2. 检查是否使用了有效的状态码
 3. 部分娱乐状态可能需要较新的QQ客户端支持
 
-## 开发者信息
+### 发送邮件失败
+**现象：** 返回"邮件发送失败"或认证错误
+**解决：**
+1. 确认插件配置中已正确填写发件人邮箱和授权码
+2. 检查授权码是否为最新（QQ邮箱授权码会定期失效）
+3. 确认发件人QQ邮箱已开启SMTP服务
+4. 检查收件人地址是否有效
+5. 查看插件日志获取详细错误信息
 
-- **作者**：Wyccotccy
-- **GitHub**：[https://github.com/Wyccotccy/astrbot_plugin_qzone_tools](https://github.com/Wyccotccy/astrbot_plugin_qzone_tools)
-- **问题反馈**：请提交 GitHub Issue
+## 开发者信息
+- 作者：Wyccotccy
+- GitHub：https://github.com/Wyccotccy/astrbot_plugin_qzone_tools
+- 问题反馈：请提交 GitHub Issue
 
 ## 更新日志
 
-### 小幅度微调：
-- **新增**了所有功能的管理员指令操作，不再仅仅支持LLM自主操作了
-- **新增**了QQ邮箱发送功能，需要再配置文件修改配置
+### v1.2.0 (当前版本)
+- ✨ 新增：QQ邮箱发送功能，支持通过SMTP发送纯文本和HTML邮件
+- ✨ 新增：插件配置文件中可设置发件人邮箱和授权码
+- 🔧 优化：完善系统提示词，增加邮件发送工具描述
 
-### v1.1.0 (当前版本)
-- ✨ **新增**：QQ状态管理功能（支持在线/Q我吧/离开/忙碌/隐身/听歌中/睡觉中/学习中）
-- ✨ **新增**：定时指令功能（create_scheduled_command），支持发空间、改状态、发消息、LLM提醒
-- ✨ **新增**：群聊消息撤回功能（recall_by_reply），支持引用撤回
-- ✨ **新增**：定时指令持久化存储，重启后自动恢复
-- 🔧 **优化**：所有函数工具添加标准文档字符串，修复参数绑定问题
-- 🔧 **优化**：搜索联系人支持名字和QQ号模糊匹配
+### v1.1.0
+- ✨ 新增：QQ状态管理功能（支持在线/Q我吧/离开/忙碌/隐身/听歌中/睡觉中/学习中）
+- ✨ 新增：定时指令功能（create_scheduled_command），支持发空间、改状态、发消息、LLM提醒
+- ✨ 新增：群聊消息撤回功能（recall_by_reply），支持引用撤回
+- ✨ 新增：定时指令持久化存储，重启后自动恢复
+- 🔧 优化：所有函数工具添加标准文档字符串，修复参数绑定问题
+- 🔧 优化：搜索联系人支持名字和QQ号模糊匹配
 
 ### v1.0.0
 - ✨ 初始版本发布
@@ -249,9 +272,8 @@ git clone https://github.com/Wyccotccy/astrbot_plugin_qzone_tools.git
 - ⏰ 支持定时消息任务
 
 ## 许可证
-
 MIT License
 
 ---
 
-**Enjoy it!** 🎉
+Enjoy it! 🎉
