@@ -4,15 +4,14 @@ import os
 import re
 import time
 import uuid
-import traceback
 import smtplib
 from email.mime.text import MIMEText
 from email.header import Header
 from email.utils import formataddr
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any, Tuple, Union
-from collections import deque
+from typing import Dict, List, Optional, Any, Tuple
+from urllib.parse import urlencode
 
 import aiohttp
 from astrbot.api import logger
@@ -24,23 +23,20 @@ from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.star.star_tools import StarTools
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import AiocqhttpMessageEvent
-from urllib.parse import urlencode
 
 
 # ==================== 记忆管理类 ====================
 class MemoryManager:
-    """持久化记忆管理器 - 基于配置文件存储"""
-    
     def __init__(self, config: AstrBotConfig, context: Context = None):
         self.config = config
         self.context = context
         self._lock = asyncio.Lock()
         if "memories" not in self.config:
             self.config["memories"] = []
-    
+
     def _get_timestamp(self) -> str:
         return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
+
     def _save_config(self):
         try:
             if hasattr(self.config, 'save') and callable(getattr(self.config, 'save')):
@@ -70,7 +66,7 @@ class MemoryManager:
             logger.debug(f"[MemoryManager] 方法3保存失败: {e}")
         logger.warning("[MemoryManager] 配置已更新但可能需重启后生效")
         return False
-    
+
     async def add_memory(self, user_id: str, content: str, tags: list = None, importance: int = 5) -> str:
         async with self._lock:
             memories = self.config.get("memories", [])
@@ -91,7 +87,7 @@ class MemoryManager:
             self._save_config()
             logger.info(f"[MemoryManager] 添加记忆成功: {memory_id} 用户: {user_id}")
             return memory_id
-    
+
     async def update_memory(self, memory_id: str, content: str = None, tags: list = None, importance: int = None) -> bool:
         async with self._lock:
             memories = self.config.get("memories", [])
@@ -108,7 +104,7 @@ class MemoryManager:
                     self._save_config()
                     return True
             return False
-    
+
     async def delete_memory(self, memory_id: str) -> bool:
         async with self._lock:
             memories = self.config.get("memories", [])
@@ -119,8 +115,8 @@ class MemoryManager:
                 self._save_config()
                 return True
             return False
-    
-    async def get_memories(self, user_id: str = None, keyword: str = None, 
+
+    async def get_memories(self, user_id: str = None, keyword: str = None,
                           limit: int = 10, sort_by: str = "updated_at") -> List[dict]:
         memories = self.config.get("memories", [])
         if not isinstance(memories, list):
@@ -139,34 +135,22 @@ class MemoryManager:
         elif sort_by in ["updated_at", "created_at"]:
             memories.sort(key=lambda x: x.get(sort_by, ""), reverse=True)
         return memories[:limit]
-    
+
     async def get_memory_by_id(self, memory_id: str) -> Optional[dict]:
         memories = await self.get_memories(limit=10000)
         for m in memories:
             if m.get("id") == memory_id:
                 return m
         return None
-    
+
     async def get_latest_memories_for_inject(self, user_id: str, count: int = 5) -> List[dict]:
         return await self.get_memories(user_id=user_id, limit=count, sort_by="updated_at")
-    
+
     async def get_all_memories(self) -> List[dict]:
         return await self.get_memories(limit=10000)
 
 
 # ==================== 数据库管理 ====================
-@dataclass
-class ScheduledCommandModel:
-    id: str
-    command_type: str
-    params: str
-    execute_time: str
-    created_at: str
-    executed: int = 0
-    recurrence: str = "once"
-    session_info: dict = None
-
-
 class DatabaseManager:
     def __init__(self, data_dir: str):
         self.data_dir = data_dir
@@ -174,14 +158,14 @@ class DatabaseManager:
         self.status_path = os.path.join(data_dir, "status.json")
         self._lock = asyncio.Lock()
         self._init_storage()
-    
+
     def _init_storage(self):
         os.makedirs(self.data_dir, exist_ok=True)
         if not os.path.exists(self.db_path):
             self._save_json(self.db_path, {"scheduled_commands": [], "version": "1.0"})
         if not os.path.exists(self.status_path):
             self._save_json(self.status_path, {"current_status": "online", "status_name": "在线"})
-    
+
     def _load_json(self, filepath: str, default: Any = None) -> Any:
         try:
             if os.path.exists(filepath):
@@ -190,7 +174,7 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"[DatabaseManager] 读取文件失败: {e}")
         return default
-    
+
     def _save_json(self, filepath: str, data: Any) -> bool:
         try:
             os.makedirs(os.path.dirname(filepath), exist_ok=True)
@@ -201,8 +185,8 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"[DatabaseManager] 保存文件失败: {e}")
             return False
-    
-    async def save_scheduled_command(self, task_id: str, command_type: str, 
+
+    async def save_scheduled_command(self, task_id: str, command_type: str,
                                      params: dict, execute_time: datetime,
                                      recurrence: str = "once",
                                      session_info: dict = None) -> bool:
@@ -227,19 +211,19 @@ class DatabaseManager:
                 commands.append(record)
             db_data["scheduled_commands"] = commands
             return self._save_json(self.db_path, db_data)
-    
+
     async def get_pending_commands(self) -> List[dict]:
         db_data = self._load_json(self.db_path, {"scheduled_commands": []})
         commands = db_data.get("scheduled_commands", [])
         return [cmd for cmd in commands if isinstance(cmd, dict) and cmd.get("executed") == 0]
-    
+
     async def get_all_commands(self, include_executed: bool = False) -> List[dict]:
         db_data = self._load_json(self.db_path, {"scheduled_commands": []})
         commands = db_data.get("scheduled_commands", [])
         if include_executed:
             return commands
         return await self.get_pending_commands()
-    
+
     async def mark_command_executed(self, task_id: str, executed: int = 1):
         async with self._lock:
             db_data = self._load_json(self.db_path, {"scheduled_commands": []})
@@ -251,7 +235,7 @@ class DatabaseManager:
                     break
             db_data["scheduled_commands"] = commands
             self._save_json(self.db_path, db_data)
-    
+
     async def delete_command(self, task_id: str):
         async with self._lock:
             db_data = self._load_json(self.db_path, {"scheduled_commands": []})
@@ -259,10 +243,10 @@ class DatabaseManager:
             commands = [cmd for cmd in commands if isinstance(cmd, dict) and cmd.get('id') != task_id]
             db_data["scheduled_commands"] = commands
             self._save_json(self.db_path, db_data)
-    
+
     async def cancel_command(self, task_id: str):
         await self.mark_command_executed(task_id, 2)
-    
+
     async def save_status(self, status_key: str, status_name: str, end_time: Optional[datetime]):
         async with self._lock:
             record = {
@@ -272,10 +256,10 @@ class DatabaseManager:
                 "updated_at": datetime.now().isoformat()
             }
             self._save_json(self.status_path, record)
-    
+
     async def load_status(self) -> Optional[dict]:
         return self._load_json(self.status_path)
-    
+
     async def clear_status(self):
         await self.save_status("online", "在线", None)
 
@@ -288,26 +272,26 @@ class QzoneSession:
         self.gtk: str = ""
         self.client = None
         self.initialized = False
-    
+
     def _calc_gtk(self, skey: str) -> str:
         hash_val = 5381
         for char in skey:
             hash_val += (hash_val << 5) + ord(char)
         return str(hash_val & 0x7fffffff)
-    
+
     async def initialize(self, client) -> bool:
         try:
             self.client = client
-            login_info = await client.api.call_action('get_login_info')
+            login_info = await client.call_action('get_login_info')
             self.uin = str(login_info.get('user_id', ''))
             if not self.uin:
                 return False
             try:
-                creds = await client.api.call_action('get_credentials', domain='qzone.qq.com')
+                creds = await client.call_action('get_credentials', domain='qzone.qq.com')
                 self.cookie = creds.get('cookies', '')
             except Exception:
                 try:
-                    cookies = await client.api.call_action('get_cookies', domain='qzone.qq.com')
+                    cookies = await client.call_action('get_cookies', domain='qzone.qq.com')
                     self.cookie = cookies.get('cookies', '')
                 except:
                     return False
@@ -325,7 +309,7 @@ class QzoneSession:
         except Exception as e:
             logger.error(f"[QzoneSession] 初始化失败: {e}")
             return False
-    
+
     async def ensure_initialized(self, client) -> bool:
         if self.initialized:
             return True
@@ -335,7 +319,7 @@ class QzoneSession:
 class QzoneAPI:
     def __init__(self, session: QzoneSession):
         self.session = session
-    
+
     async def publish_post(self, text: str, images: list = None) -> dict:
         images = images or []
         if not self.session.initialized:
@@ -373,7 +357,7 @@ class QzoneAPI:
 
 
 class ScheduledTask:
-    def __init__(self, task_id: str, target_id: str, message: str, send_time: datetime, 
+    def __init__(self, task_id: str, target_id: str, message: str, send_time: datetime,
                  chat_type: str, target_name: str = ""):
         self.task_id = task_id
         self.target_id = target_id
@@ -394,10 +378,10 @@ class QQStatusManager:
         self.pending_task: Optional[asyncio.Task] = None
         self._lock = asyncio.Lock()
         self.db_manager: Optional[DatabaseManager] = None
-    
+
     def set_db_manager(self, db_manager: DatabaseManager):
         self.db_manager = db_manager
-    
+
     async def restore_from_db(self, client):
         if not self.db_manager:
             return
@@ -425,11 +409,11 @@ class QQStatusManager:
                     )
         except Exception as e:
             logger.error(f"[QQStatusManager] 恢复状态失败: {e}")
-    
+
     async def _force_set_online(self, client):
         try:
             params = {"status": 10, "ext_status": 0, "battery_status": 0}
-            await client.api.call_action('set_online_status', **params)
+            await client.call_action('set_online_status', **params)
             self.current_status = "online"
             self.current_status_name = "在线"
             self.status_end_time = None
@@ -437,7 +421,7 @@ class QQStatusManager:
                 await self.db_manager.clear_status()
         except Exception as e:
             logger.error(f"[QQStatusManager] 强制恢复在线失败: {e}")
-    
+
     def get_status_info(self, status_key: str) -> Optional[dict]:
         BASIC_STATUS = {
             "online": {"name": "在线", "status": 10, "ext": 0},
@@ -455,7 +439,7 @@ class QQStatusManager:
         if status_key in BASIC_STATUS:
             return BASIC_STATUS[status_key]
         return FUN_STATUS.get(status_key)
-    
+
     def get_current_status_desc(self) -> str:
         if self.current_status == "online":
             return "当前状态：在线"
@@ -465,14 +449,14 @@ class QQStatusManager:
             remain_min = remain.seconds // 60 + remain.days * 1440
             return f"当前状态：{self.current_status_name}（还剩约{remain_min}分钟）"
         return f"当前状态：{self.current_status_name}"
-    
+
     def is_status_active(self) -> bool:
         if self.current_status == "online":
             return False
         if self.status_end_time and datetime.now() < self.status_end_time:
             return True
         return False
-    
+
     async def set_status(self, client, status_key: str, duration_minutes: int, delay_minutes: int = 0) -> dict:
         async with self._lock:
             status_info = self.get_status_info(status_key)
@@ -486,12 +470,12 @@ class QQStatusManager:
                     await self._execute_set_status(client, status_key, duration_minutes)
                 self.pending_task = asyncio.create_task(delayed_task())
                 return {"success": True, "msg": f"已设置定时状态：{delay_minutes}分钟后切换", "is_pending": True}
-    
+
     async def _execute_set_status(self, client, status_key: str, duration_minutes: int) -> dict:
         status_info = self.get_status_info(status_key)
         try:
             params = {"status": status_info["status"], "ext_status": status_info["ext"], "battery_status": 0}
-            await client.api.call_action('set_online_status', **params)
+            await client.call_action('set_online_status', **params)
             if status_key == "online":
                 if self.restore_task and not self.restore_task.done():
                     self.restore_task.cancel()
@@ -514,14 +498,14 @@ class QQStatusManager:
             }
         except Exception as e:
             return {"success": False, "msg": f"设置失败: {str(e)}"}
-    
+
     async def _auto_restore_online(self, client, delay_minutes: int):
         try:
             await asyncio.sleep(delay_minutes * 60)
             if not client:
                 return
             params = {"status": 10, "ext_status": 0, "battery_status": 0}
-            await client.api.call_action('set_online_status', **params)
+            await client.call_action('set_online_status', **params)
             async with self._lock:
                 self.current_status = "online"
                 self.current_status_name = "在线"
@@ -541,7 +525,7 @@ class ScheduledCommandExecutor:
         self.db_manager = plugin.db_manager
         self.running_tasks: Dict[str, asyncio.Task] = {}
         self._stop_check = False
-    
+
     async def start_periodic_check(self):
         self._stop_check = False
         while not self._stop_check:
@@ -551,10 +535,10 @@ class ScheduledCommandExecutor:
                     await self._check_and_execute_pending()
                 except Exception as e:
                     logger.error(f"[ScheduledCommandExecutor] 定时检查失败: {e}")
-    
+
     def stop_periodic_check(self):
         self._stop_check = True
-    
+
     async def schedule_command(self, task_id: str, execute_time: datetime, command_type: str, params: dict, session_info: dict = None):
         now = datetime.now()
         delay_seconds = (execute_time - now).total_seconds()
@@ -564,14 +548,14 @@ class ScheduledCommandExecutor:
                 await self._execute_command(task_id, command_type, params, session_info)
             task = asyncio.create_task(delayed_execution())
             self.running_tasks[task_id] = task
-    
+
     def cancel_task(self, task_id: str):
         if task_id in self.running_tasks:
             task = self.running_tasks[task_id]
             if not task.done():
                 task.cancel()
             del self.running_tasks[task_id]
-    
+
     async def _check_and_execute_pending(self):
         pending = await self.db_manager.get_pending_commands()
         now = datetime.now()
@@ -588,7 +572,7 @@ class ScheduledCommandExecutor:
                     self.running_tasks[cmd['id']] = task
             except Exception as e:
                 logger.error(f"[ScheduledCommandExecutor] 处理指令失败: {e}")
-    
+
     async def _execute_command(self, task_id: str, command_type: str, params: dict, session_info: dict = None):
         try:
             client = self.plugin._client
@@ -608,9 +592,9 @@ class ScheduledCommandExecutor:
                 chat_type = params.get("chat_type", "group")
                 if target_id and message:
                     if chat_type == "group":
-                        await client.api.call_action('send_group_msg', group_id=int(target_id), message=message)
+                        await client.call_action('send_group_msg', group_id=int(target_id), message=message)
                     else:
-                        await client.api.call_action('send_private_msg', user_id=int(target_id), message=message)
+                        await client.call_action('send_private_msg', user_id=int(target_id), message=message)
             elif command_type == "llm_remind":
                 prompt = params.get("prompt", "")
                 if prompt and session_info:
@@ -628,36 +612,34 @@ class ScheduledCommandExecutor:
 
 
 class EmailSender:
-    """QQ邮箱发送器（同步转异步）"""
     def __init__(self, config: AstrBotConfig):
         self.config = config
-    
+
     def _get_smtp_settings(self) -> Tuple[str, int, str, str]:
         sender = self.config.get("email_sender", "").strip()
         auth_code = self.config.get("email_authorization_code", "").strip()
         server = self.config.get("email_smtp_server", "smtp.qq.com").strip()
         port = self.config.get("email_smtp_port", 465)
         return server, port, sender, auth_code
-    
+
     async def send_email(self, to_email: str, subject: str, content: str, sender_nickname: str = "") -> dict:
-        """发送单封邮件，to_email 为单个邮箱地址"""
         server, port, sender, auth_code = self._get_smtp_settings()
         logger.info(f"[EmailSender] 配置: sender={sender}, auth_code={'已配置' if auth_code else '未配置'}, server={server}, port={port}")
-        
+
         if not sender or not auth_code:
             return {"success": False, "msg": "❌ 发件人邮箱或授权码未配置，请在插件配置中填写 email_sender 和 email_authorization_code 后重载插件"}
-        
+
         to_email = to_email.strip()
         if not to_email:
             return {"success": False, "msg": "收件人邮箱不能为空"}
-        
+
         try:
             msg = MIMEText(content, "plain", "utf-8")
             from_addr = formataddr((sender_nickname, sender), charset="utf-8")
             msg["From"] = from_addr
             msg["To"] = formataddr(("", to_email), charset="utf-8")
             msg["Subject"] = Header(subject or "来自AstrBot的邮件", "utf-8")
-            
+
             loop = asyncio.get_running_loop()
             def send_sync():
                 with smtplib.SMTP_SSL(server, port, timeout=15) as smtp:
@@ -677,16 +659,16 @@ class Main(Star):
         super().__init__(context)
         self.config = config or {}
         self.context = context
-        
+
         self.memory_manager = MemoryManager(self.config, context)
         self.email_sender = EmailSender(self.config)
-        
+
         try:
             self.data_dir = StarTools.get_data_dir("astrbot_plugin_qzone_tools")
         except RuntimeError:
             self.data_dir = os.path.join(get_astrbot_data_path(), "plugin_data", "astrbot_plugin_qzone_tools")
         os.makedirs(self.data_dir, exist_ok=True)
-        
+
         self.db_manager = DatabaseManager(self.data_dir)
         self.session = QzoneSession()
         self.qzone = QzoneAPI(self.session)
@@ -700,14 +682,46 @@ class Main(Star):
         self.status_manager = QQStatusManager()
         self.command_executor: Optional[ScheduledCommandExecutor] = None
         self._restored = False
-    
+
+        # 刷新相关
+        self._refresh_task: Optional[asyncio.Task] = None
+        self._refresh_lock = asyncio.Lock()
+
     async def initialize(self):
         self.status_manager.set_db_manager(self.db_manager)
         self.command_executor = ScheduledCommandExecutor(self)
         asyncio.create_task(self.command_executor.start_periodic_check())
         asyncio.create_task(self._delayed_restore())
-        logger.info(f"[Main] 插件已加载，包含记忆、邮件、定时任务功能")
-    
+        # 启动定时刷新会话任务（每2小时）
+        self._refresh_task = asyncio.create_task(self._periodic_refresh())
+        logger.info(f"[Main] 插件已加载，包含记忆、邮件、定时任务、会话自动刷新功能")
+
+    async def _periodic_refresh(self):
+        """每2小时刷新一次QQ空间会话"""
+        while True:
+            try:
+                await asyncio.sleep(2 * 3600)  # 2小时
+                await self._refresh_session()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"[Main] 定时刷新会话失败: {e}")
+
+    async def _refresh_session(self):
+        """强制刷新QQ空间会话（重新获取 cookies 和 gtk）"""
+        async with self._refresh_lock:
+            client = await self._get_client()
+            if not client:
+                logger.warning("[Main] 无法获取QQ客户端，跳过会话刷新")
+                return
+            logger.info("[Main] 开始刷新QQ空间会话...")
+            # 无论当前是否已初始化，都重新初始化，因为 cookies 可能已过期
+            success = await self.session.initialize(client)
+            if success:
+                logger.info("[Main] QQ空间会话刷新成功")
+            else:
+                logger.warning("[Main] QQ空间会话刷新失败")
+
     async def _delayed_restore(self):
         await asyncio.sleep(10)
         try:
@@ -726,7 +740,7 @@ class Main(Star):
             logger.warning(f"[Main] 获取客户端失败: {e}")
         if self._client:
             await self._do_restore()
-    
+
     async def _do_restore(self):
         if self._restored:
             return
@@ -738,8 +752,10 @@ class Main(Star):
                 logger.info("[Main] 数据恢复完成")
         except Exception as e:
             logger.error(f"[Main] 恢复失败: {e}")
-    
+
     async def terminate(self):
+        if self._refresh_task and not self._refresh_task.done():
+            self._refresh_task.cancel()
         if self.command_executor:
             self.command_executor.stop_periodic_check()
         for task_id, task in list(self.running_tasks.items()):
@@ -759,21 +775,42 @@ class Main(Star):
                 self.status_manager.status_end_time
             )
         logger.info("[Main] 插件已卸载")
-    
+
     async def _get_client(self, event: AstrMessageEvent = None):
-        if self._client:
+        # 如果已有有效的 client（带 call_action 方法），直接返回
+        if self._client and hasattr(self._client, 'call_action'):
             return self._client
+
+        # 优先从事件中获取（如果有 event）
         if event:
+            # AiocqhttpMessageEvent 的 bot 属性就是 client
             client = getattr(event, 'bot', None)
-            if not client:
-                msg_obj = getattr(event, 'message_obj', None)
-                if msg_obj:
-                    client = getattr(msg_obj, 'bot', None)
-            if client:
+            if client and hasattr(client, 'call_action'):
                 self._client = client
-                self.status_manager.set_db_manager(self.db_manager)
-        return self._client
-    
+                return client
+
+        # 无事件时，从 platform_manager 获取第一个可用的平台适配器实例
+        try:
+            pm = self.context.platform_manager
+            if hasattr(pm, 'get_insts'):
+                platforms = pm.get_insts()
+            else:
+                platforms = pm._platforms.values() if hasattr(pm, '_platforms') else []
+            for platform in platforms:
+                # 尝试获取客户端
+                if hasattr(platform, 'get_client'):
+                    client = platform.get_client()
+                    if client and hasattr(client, 'call_action'):
+                        self._client = client
+                        return client
+                elif hasattr(platform, 'client') and hasattr(platform.client, 'call_action'):
+                    self._client = platform.client
+                    return platform.client
+        except Exception as e:
+            logger.debug(f"[Main] 从 platform_manager 获取 client 失败: {e}")
+
+        return None
+
     async def _ensure_initialized(self, event: AstrMessageEvent) -> bool:
         if self.session.initialized:
             return True
@@ -781,19 +818,20 @@ class Main(Star):
         if not client:
             return False
         return await self.session.initialize(client)
-    
+
     async def _update_contacts_cache(self, client):
         now = time.time()
         if now - self._cache_time < self._cache_expire and (self._groups_cache or self._friends_cache):
             return
         try:
             try:
-                groups_result = await client.api.call_action('get_group_list')
+                # 直接使用 client 调用 API
+                groups_result = await client.call_action('get_group_list')
                 self._groups_cache = groups_result if isinstance(groups_result, list) else groups_result.get('data', [])
             except:
                 self._groups_cache = []
             try:
-                friends_result = await client.api.call_action('get_friend_list')
+                friends_result = await client.call_action('get_friend_list')
                 self._friends_cache = friends_result if isinstance(friends_result, list) else friends_result.get('data', [])
             except:
                 self._friends_cache = []
@@ -808,7 +846,7 @@ class Main(Star):
         if not target_id.isdigit():
             return False, "目标ID必须是纯数字"
         return True, target_id
-    
+
     def _parse_time(self, time_str: str) -> Optional[datetime]:
         time_str = time_str.strip()
         now = datetime.now()
@@ -836,17 +874,40 @@ class Main(Star):
                 continue
         return None
 
+    # 修复：添加 _execute_scheduled_task 方法，用于 schedule_message 工具
+    async def _execute_scheduled_task(self, task_id: str, delay_seconds: float):
+        """执行定时任务（内部方法）"""
+        try:
+            await asyncio.sleep(delay_seconds)
+            task = self.scheduled_tasks.get(task_id)
+            if not task or task.cancelled:
+                return
+            client = self._client
+            if not client:
+                return
+            if task.chat_type == "group":
+                await client.call_action('send_group_msg', group_id=int(task.target_id), message=task.message)
+            else:
+                await client.call_action('send_private_msg', user_id=int(task.target_id), message=task.message)
+            task.completed = True
+        except Exception as e:
+            logger.error(f"[Main] 定时任务执行失败: {e}")
+        finally:
+            if task_id in self.scheduled_tasks:
+                del self.scheduled_tasks[task_id]
+            if task_id in self.running_tasks:
+                del self.running_tasks[task_id]
+
     # ==================== LLM 工具函数 ====================
-    
+
     @filter.llm_tool(name="add_memory")
     async def add_memory(self, event: AstrMessageEvent, content: str, tags: str = "", importance: int = 5) -> str:
-        """
-        添加重要记忆到存储中。当用户提到重要信息（如喜好、计划、重要日期、个人情况等）时，使用此工具保存。
+        """添加重要记忆到存储中。
         
         Args:
-            content (string): 记忆内容，简洁明了地描述事实
-            tags (string): 标签，用逗号分隔，如"喜好,计划,工作"，方便后续分类检索
-            importance (int): 重要程度1-10，默认为5。关键信息用8-10，一般信息用3-5，琐碎信息用1-2
+            content(string): 记忆内容
+            tags(string): 标签，多个标签用逗号分隔
+            importance(number): 重要程度，1-10
         """
         user_id = event.get_sender_id()
         tags_list = [t.strip() for t in tags.split(",")] if tags else []
@@ -855,13 +916,12 @@ class Main(Star):
 
     @filter.llm_tool(name="search_memories")
     async def search_memories(self, event: AstrMessageEvent, keyword: str = "", user_specific: bool = True, limit: int = 10) -> str:
-        """
-        搜索记忆。支持关键词搜索，可选是否限定当前用户。
+        """搜索记忆。
         
         Args:
-            keyword (string): 搜索关键词，如"生日"、"喜好"、"计划"等，空字符串则返回最新记忆
-            user_specific (bool): 是否仅搜索当前用户的记忆，默认为是。设为false可搜索所有用户记忆（需管理员权限上下文）
-            limit (int): 返回数量，默认10条，最大20条
+            keyword(string): 搜索关键词
+            user_specific(boolean): 是否只搜索当前用户的记忆
+            limit(number): 返回结果数量限制
         """
         user_id = event.get_sender_id() if user_specific else None
         limit = min(limit, 20)
@@ -877,14 +937,13 @@ class Main(Star):
 
     @filter.llm_tool(name="update_memory")
     async def update_memory(self, event: AstrMessageEvent, memory_id: str, content: str = None, tags: str = None, importance: int = None) -> str:
-        """
-        更新已有记忆的内容、标签或重要度。需要提供记忆ID（可从search_memories获取）。
+        """更新已有记忆。
         
         Args:
-            memory_id (string): 记忆ID（8位字符串）
-            content (string): 新内容（可选，不提供则不修改）
-            tags (string): 新标签，逗号分隔（可选，不提供则不修改，提供空字符串则清空标签）
-            importance (int): 新重要度1-10（可选，不提供则不修改）
+            memory_id(string): 记忆ID
+            content(string): 新的记忆内容
+            tags(string): 新的标签，多个用逗号分隔
+            importance(number): 新的重要程度1-10
         """
         existing = await self.memory_manager.get_memory_by_id(memory_id)
         if not existing:
@@ -895,11 +954,10 @@ class Main(Star):
 
     @filter.llm_tool(name="delete_memory")
     async def delete_memory(self, event: AstrMessageEvent, memory_id: str) -> str:
-        """
-        删除指定记忆。谨慎使用，删除后无法恢复。
+        """删除指定记忆。
         
         Args:
-            memory_id (string): 要删除的记忆ID
+            memory_id(string): 要删除的记忆ID
         """
         existing = await self.memory_manager.get_memory_by_id(memory_id)
         if not existing:
@@ -909,11 +967,10 @@ class Main(Star):
 
     @filter.llm_tool(name="get_memory_detail")
     async def get_memory_detail(self, event: AstrMessageEvent, memory_id: str) -> str:
-        """
-        获取单条记忆的完整详情。
+        """获取单条记忆详情。
         
         Args:
-            memory_id (string): 记忆ID
+            memory_id(string): 记忆ID
         """
         m = await self.memory_manager.get_memory_by_id(memory_id)
         if not m:
@@ -932,13 +989,12 @@ class Main(Star):
 
     @filter.llm_tool(name="send_message")
     async def send_message_tool(self, event: AstrMessageEvent, target_id: str, message: str, chat_type: str = "auto") -> str:
-        """
-        向指定的QQ好友或群聊发送QQ聊天消息。
+        """向指定的QQ好友或群聊发送消息。
         
         Args:
-            target_id (string): 目标QQ号或群号
-            message (string): 要发送的消息内容
-            chat_type (string): 聊天类型，可选值：private(私聊), group(群聊), auto(自动判断)，默认为auto
+            target_id(string): 目标QQ号或群号
+            message(string): 要发送的消息内容
+            chat_type(string): 聊天类型，可选值：group/private/auto
         """
         client = await self._get_client(event)
         if not client:
@@ -952,23 +1008,23 @@ class Main(Star):
             chat_type = "group" if is_group else "private"
         try:
             if chat_type == "group":
-                await client.api.call_action('send_group_msg', group_id=int(target_id), message=message)
+                # 直接使用 client 调用 API
+                await client.call_action('send_group_msg', group_id=int(target_id), message=message)
             else:
-                await client.api.call_action('send_private_msg', user_id=int(target_id), message=message)
+                await client.call_action('send_private_msg', user_id=int(target_id), message=message)
             return f"✅ 已发送消息到 {target_id}"
         except Exception as e:
             return f"发送失败: {str(e)}"
 
     @filter.llm_tool(name="schedule_message")
     async def schedule_message(self, event: AstrMessageEvent, target_id: str, message: str, send_time: str, chat_type: str = "group") -> str:
-        """
-        创建定时消息任务，在指定时间向目标发送QQ消息。
+        """创建定时消息任务。
         
         Args:
-            target_id (string): 目标QQ号或群号
-            message (string): 要发送的消息内容
-            send_time (string): 发送时间，支持格式：YYYY-MM-DD HH:MM:SS、MM-DD HH:MM、HH:MM、每天的HH:MM
-            chat_type (string): 聊天类型，可选值：private(私聊), group(群聊)，默认为group
+            target_id(string): 目标QQ号或群号
+            message(string): 要发送的消息内容
+            send_time(string): 发送时间，格式：YYYY-MM-DD HH:MM 或 HH:MM 或 每天的HH:MM
+            chat_type(string): 聊天类型，group或private
         """
         client = await self._get_client(event)
         if not client:
@@ -985,39 +1041,17 @@ class Main(Star):
         task = ScheduledTask(task_id=task_id, target_id=target_id, message=message, send_time=parsed_time, chat_type=chat_type)
         self.scheduled_tasks[task_id] = task
         delay_seconds = (parsed_time - datetime.now()).total_seconds()
+        # 修复：使用 self._execute_scheduled_task 而不是不存在的方法
         asyncio_task = asyncio.create_task(self._execute_scheduled_task(task_id, delay_seconds))
         self.running_tasks[task_id] = asyncio_task
         return f"✅ 定时任务已创建\n任务ID: {task_id}\n时间: {parsed_time.strftime('%Y-%m-%d %H:%M:%S')}"
 
-    async def _execute_scheduled_task(self, task_id: str, delay_seconds: float):
-        try:
-            await asyncio.sleep(delay_seconds)
-            task = self.scheduled_tasks.get(task_id)
-            if not task or task.cancelled:
-                return
-            client = self._client
-            if not client:
-                return
-            if task.chat_type == "group":
-                await client.api.call_action('send_group_msg', group_id=int(task.target_id), message=task.message)
-            else:
-                await client.api.call_action('send_private_msg', user_id=int(task.target_id), message=task.message)
-            task.completed = True
-        except Exception as e:
-            logger.error(f"[Main] 定时任务执行失败: {e}")
-        finally:
-            if task_id in self.scheduled_tasks:
-                del self.scheduled_tasks[task_id]
-            if task_id in self.running_tasks:
-                del self.running_tasks[task_id]
-
     @filter.llm_tool(name="cancel_scheduled_message")
     async def cancel_scheduled_message(self, event: AstrMessageEvent, task_id: str) -> str:
-        """
-        取消已创建的定时消息任务。
+        """取消定时消息任务。
         
         Args:
-            task_id (string): 任务ID
+            task_id(string): 要取消的任务ID
         """
         if task_id not in self.scheduled_tasks:
             return f"错误：未找到任务"
@@ -1032,11 +1066,10 @@ class Main(Star):
 
     @filter.llm_tool(name="list_scheduled_messages")
     async def list_scheduled_messages(self, event: AstrMessageEvent, show_all: bool = False) -> str:
-        """
-        列出所有定时消息任务。
+        """列出定时消息任务。
         
         Args:
-            show_all (bool): 是否显示已执行/已取消的任务，默认为False
+            show_all(boolean): 是否显示所有任务（包括已完成和已取消的）
         """
         tasks = list(self.scheduled_tasks.values()) if show_all else [t for t in self.scheduled_tasks.values() if not t.cancelled and not t.completed]
         if not tasks:
@@ -1049,11 +1082,10 @@ class Main(Star):
 
     @filter.llm_tool(name="publish_qzone")
     async def publish_qzone(self, event: AstrMessageEvent, content: str) -> str:
-        """
-        发布QQ空间说说。
+        """发布QQ空间说说。
         
         Args:
-            content (string): 说说内容
+            content(string): 说说内容
         """
         if not await self._ensure_initialized(event):
             return "错误：无法初始化QQ空间"
@@ -1062,12 +1094,11 @@ class Main(Star):
 
     @filter.llm_tool(name="send_poke")
     async def send_poke(self, event: AstrMessageEvent, target_qq: str, chat_type: str = "auto") -> str:
-        """
-        向指定用户发送戳一戳（窗口抖动）。
+        """发送戳一戳。
         
         Args:
-            target_qq (string): 目标用户QQ号
-            chat_type (string): 聊天类型，可选值：private(私聊), group(群聊), auto(自动判断)，默认为auto
+            target_qq(string): 目标QQ号
+            chat_type(string): 聊天类型，可选值：group/private/auto
         """
         client = await self._get_client(event)
         if not client:
@@ -1079,11 +1110,12 @@ class Main(Star):
             chat_type = "private" if event.is_private_chat() else "group"
         try:
             if chat_type == "private":
-                await client.api.call_action('friend_poke', user_id=int(target_qq))
+                # 直接使用 client 调用 API
+                await client.call_action('friend_poke', user_id=int(target_qq))
             else:
                 group_id = event.get_group_id()
                 if group_id:
-                    await client.api.call_action('group_poke', group_id=int(group_id), user_id=int(target_qq))
+                    await client.call_action('group_poke', group_id=int(group_id), user_id=int(target_qq))
                 else:
                     return "错误：无法获取群号"
             return f"✅ 已戳一戳 {target_qq}"
@@ -1092,13 +1124,12 @@ class Main(Star):
 
     @filter.llm_tool(name="update_qq_status")
     async def update_qq_status(self, event: AstrMessageEvent, status: str, duration_minutes: int, delay_minutes: int = 0) -> str:
-        """
-        设置QQ在线状态。
+        """设置QQ在线状态。
         
         Args:
-            status (string): 状态码，可选值：online(在线), qme(Q我吧), away(离开), busy(忙碌), dnd(请勿打扰), invisible(隐身), listening(听歌中), sleeping(睡觉中), studying(学习中)
-            duration_minutes (int): 持续时间（分钟），最短1分钟
-            delay_minutes (int): 延迟执行时间（分钟），默认为0立即执行
+            status(string): 状态码，可选值：online/qme/away/busy/dnd/invisible/listening/sleeping/studying
+            duration_minutes(number): 状态持续时间（分钟）
+            delay_minutes(number): 延迟执行时间（分钟）
         """
         client = await self._get_client(event)
         if not client:
@@ -1110,28 +1141,23 @@ class Main(Star):
 
     @filter.llm_tool(name="get_qq_status")
     async def get_qq_status(self, event: AstrMessageEvent) -> str:
-        """
-        获取当前QQ在线状态。
-        """
+        """获取当前QQ在线状态。"""
         return self.status_manager.get_current_status_desc()
 
     @filter.llm_tool(name="get_fun_status_list")
     async def get_fun_status_list(self, event: AstrMessageEvent) -> str:
-        """
-        获取娱乐状态列表，用于查看可用的特殊状态码。
-        """
+        """获取娱乐状态列表。"""
         return "娱乐状态：listening(听歌中), sleeping(睡觉中), studying(学习中)"
 
     @filter.llm_tool(name="create_scheduled_command")
     async def create_scheduled_command(self, event: AstrMessageEvent, command_type: str, execute_time: str, params: str, recurrence: str = "once") -> str:
-        """
-        创建定时指令任务，支持发空间、改状态、发消息、LLM提醒等功能。
+        """创建定时指令任务。
         
         Args:
-            command_type (string): 指令类型，可选值：qzone_post(发空间), status_change(改状态), send_message(发消息), llm_remind(LLM提醒)
-            execute_time (string): 执行时间，支持格式同schedule_message
-            params (string): 指令参数，JSON格式字符串
-            recurrence (string): 重复模式，可选值：once(单次), daily(每天)，默认为once
+            command_type(string): 指令类型，可选值：qzone_post/status_change/send_message/llm_remind
+            execute_time(string): 执行时间，格式：YYYY-MM-DD HH:MM 或 HH:MM 或 每天的HH:MM
+            params(string): 指令参数，JSON格式字符串
+            recurrence(string): 重复类型，可选值：once/daily
         """
         parsed_time = self._parse_time(execute_time)
         if not parsed_time:
@@ -1159,11 +1185,10 @@ class Main(Star):
 
     @filter.llm_tool(name="list_scheduled_commands")
     async def list_scheduled_commands(self, event: AstrMessageEvent, include_executed: bool = False) -> str:
-        """
-        列出所有定时指令任务。
+        """列出定时指令任务。
         
         Args:
-            include_executed (bool): 是否包含已执行的指令，默认为False
+            include_executed(boolean): 是否包含已执行的指令
         """
         commands = await self.db_manager.get_all_commands(include_executed)
         if not commands:
@@ -1178,11 +1203,10 @@ class Main(Star):
 
     @filter.llm_tool(name="cancel_scheduled_command")
     async def cancel_scheduled_command(self, event: AstrMessageEvent, task_id: str) -> str:
-        """
-        取消指定的定时指令任务（标记为取消状态，保留记录）。
+        """取消定时指令任务。
         
         Args:
-            task_id (string): 任务ID
+            task_id(string): 要取消的任务ID
         """
         await self.db_manager.cancel_command(task_id)
         self.command_executor.cancel_task(task_id)
@@ -1190,11 +1214,10 @@ class Main(Star):
 
     @filter.llm_tool(name="delete_scheduled_command")
     async def delete_scheduled_command(self, event: AstrMessageEvent, task_id: str) -> str:
-        """
-        彻底删除指定的定时指令任务（不保留记录）。
+        """彻底删除定时指令任务。
         
         Args:
-            task_id (string): 任务ID
+            task_id(string): 要删除的任务ID
         """
         await self.db_manager.delete_command(task_id)
         self.command_executor.cancel_task(task_id)
@@ -1202,10 +1225,7 @@ class Main(Star):
 
     @filter.llm_tool(name="recall_by_reply")
     async def recall_by_reply(self, event: AiocqhttpMessageEvent) -> str:
-        """
-        通过引用消息撤回群聊中的消息（仅支持群聊）。
-        使用方法：引用要撤回的消息，然后调用此工具。
-        """
+        """通过引用消息撤回群聊消息。使用时需要引用要撤回的消息。"""
         if event.is_private_chat():
             return "❌ 此功能仅支持群聊中使用"
         chain = event.get_messages()
@@ -1218,23 +1238,22 @@ class Main(Star):
         if not group_id:
             return "❌ 无法获取群号"
         try:
-            await event.bot.delete_msg(message_id=int(msg_id), group_id=int(group_id))
+            # 直接使用 event.bot 调用 API
+            await event.bot.call_action('delete_msg', message_id=int(msg_id), group_id=int(group_id))
             return f"✅ 撤回成功\n• 消息ID: {msg_id}"
         except Exception as e:
             return f"❌ 撤回失败: {str(e)[:200]}"
 
     @filter.llm_tool(name="send_qq_email")
     async def send_qq_email_tool(self, event: AstrMessageEvent, to: str, subject: str, content: str, nickname: str = "") -> str:
-        """
-        通过QQ邮箱SMTP服务发送电子邮件（不是QQ聊天消息）。发件人邮箱和授权码已在插件配置中设置，只需提供收件人、主题和正文。
+        """通过QQ邮箱SMTP服务发送电子邮件。
         
         Args:
-            to (string): 收件人邮箱地址，例如 "123456@qq.com"，一次只发送一个收件人
-            subject (string): 邮件主题
-            content (string): 邮件正文内容
-            nickname (string): 发件人昵称（可选，不填则显示邮箱地址）
+            to(string): 收件人邮箱地址
+            subject(string): 邮件主题
+            content(string): 邮件正文内容
+            nickname(string): 发件人昵称
         """
-        # 防御：如果 to 是列表（极少情况），转为字符串并取第一个
         if isinstance(to, list):
             if len(to) > 0:
                 to = to[0]
@@ -1242,13 +1261,10 @@ class Main(Star):
                 return "❌ 收件人列表为空"
         if not isinstance(to, str):
             to = str(to)
-        
         to = to.strip()
         if not to:
             return "❌ 收件人邮箱不能为空"
-        
         logger.info(f"[send_qq_email] 收到参数: to={to}, subject={subject}, nickname={nickname}")
-        
         result = await self.email_sender.send_email(to, subject, content, nickname)
         return result["msg"]
 
@@ -1282,7 +1298,7 @@ class Main(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("tool_memory")
     async def admin_memory(self, event: AstrMessageEvent):
-        """管理记忆：/tool_memory list [user_id] 或 /tool_memory add <内容> [标签] [重要度] 或 /tool_memory delete <id> 或 /tool_memory update <id> [内容] [标签] [重要度]"""
+        """管理记忆"""
         args = event.message_str.strip().split()
         if len(args) < 2:
             await event.send(MessageChain().message(
@@ -1419,7 +1435,6 @@ class Main(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("tool_email")
     async def admin_email(self, event: AstrMessageEvent):
-        """管理员手动发送邮件：/tool_email <收件人> <主题> <内容> [昵称]"""
         text = event.message_str.strip()
         parts = text.split(maxsplit=1)
         if len(parts) < 2:
@@ -1443,13 +1458,13 @@ class Main(Star):
         subject = argv[1]
         content = argv[2]
         nickname = argv[3] if len(argv) > 3 else ""
-        
+
         sender_cfg = self.config.get("email_sender", "")
         auth_cfg = self.config.get("email_authorization_code", "")
         if not sender_cfg or not auth_cfg:
             await event.send(MessageChain().message("❌ 发件人邮箱或授权码未配置，请在插件配置中填写后重载插件"))
             return
-        
+
         result = await self.email_sender.send_email(to, subject, content, nickname)
         await event.send(MessageChain().message(result["msg"]))
 
