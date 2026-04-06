@@ -17,7 +17,7 @@ import aiohttp
 from astrbot.api import logger
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star
-from astrbot.api.message_components import Plain, Reply, At
+from astrbot.api.message_components import Plain, Reply
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.star.star_tools import StarTools
@@ -580,8 +580,10 @@ class ScheduledCommandExecutor:
                 return
             if command_type == "qzone_post":
                 content = params.get("content", "")
-                if content and self.plugin.session.initialized:
-                    await self.plugin.qzone.publish_post(content)
+                if content:
+                    success = await self.plugin.session.initialize(client)
+                    if success:
+                        await self.plugin.qzone.publish_post(content)
             elif command_type == "status_change":
                 status = params.get("status", "online")
                 duration = params.get("duration_minutes", 30)
@@ -683,7 +685,6 @@ class Main(Star):
         self.command_executor: Optional[ScheduledCommandExecutor] = None
         self._restored = False
 
-        # 刷新相关
         self._refresh_task: Optional[asyncio.Task] = None
         self._refresh_lock = asyncio.Lock()
 
@@ -692,15 +693,13 @@ class Main(Star):
         self.command_executor = ScheduledCommandExecutor(self)
         asyncio.create_task(self.command_executor.start_periodic_check())
         asyncio.create_task(self._delayed_restore())
-        # 启动定时刷新会话任务（每2小时）
         self._refresh_task = asyncio.create_task(self._periodic_refresh())
-        logger.info(f"[Main] 插件已加载，包含记忆、邮件、定时任务、会话自动刷新功能")
+        logger.info(f"[Main] 插件已加载")
 
     async def _periodic_refresh(self):
-        """每2小时刷新一次QQ空间会话"""
         while True:
             try:
-                await asyncio.sleep(2 * 3600)  # 2小时
+                await asyncio.sleep(2 * 3600)
                 await self._refresh_session()
             except asyncio.CancelledError:
                 break
@@ -708,14 +707,12 @@ class Main(Star):
                 logger.error(f"[Main] 定时刷新会话失败: {e}")
 
     async def _refresh_session(self):
-        """强制刷新QQ空间会话（重新获取 cookies 和 gtk）"""
         async with self._refresh_lock:
             client = await self._get_client()
             if not client:
                 logger.warning("[Main] 无法获取QQ客户端，跳过会话刷新")
                 return
             logger.info("[Main] 开始刷新QQ空间会话...")
-            # 无论当前是否已初始化，都重新初始化，因为 cookies 可能已过期
             success = await self.session.initialize(client)
             if success:
                 logger.info("[Main] QQ空间会话刷新成功")
@@ -777,19 +774,13 @@ class Main(Star):
         logger.info("[Main] 插件已卸载")
 
     async def _get_client(self, event: AstrMessageEvent = None):
-        # 如果已有有效的 client（带 call_action 方法），直接返回
         if self._client and hasattr(self._client, 'call_action'):
             return self._client
-
-        # 优先从事件中获取（如果有 event）
         if event:
-            # AiocqhttpMessageEvent 的 bot 属性就是 client
             client = getattr(event, 'bot', None)
             if client and hasattr(client, 'call_action'):
                 self._client = client
                 return client
-
-        # 无事件时，从 platform_manager 获取第一个可用的平台适配器实例
         try:
             pm = self.context.platform_manager
             if hasattr(pm, 'get_insts'):
@@ -797,7 +788,6 @@ class Main(Star):
             else:
                 platforms = pm._platforms.values() if hasattr(pm, '_platforms') else []
             for platform in platforms:
-                # 尝试获取客户端
                 if hasattr(platform, 'get_client'):
                     client = platform.get_client()
                     if client and hasattr(client, 'call_action'):
@@ -808,7 +798,6 @@ class Main(Star):
                     return platform.client
         except Exception as e:
             logger.debug(f"[Main] 从 platform_manager 获取 client 失败: {e}")
-
         return None
 
     async def _ensure_initialized(self, event: AstrMessageEvent) -> bool:
@@ -825,7 +814,6 @@ class Main(Star):
             return
         try:
             try:
-                # 直接使用 client 调用 API
                 groups_result = await client.call_action('get_group_list')
                 self._groups_cache = groups_result if isinstance(groups_result, list) else groups_result.get('data', [])
             except:
@@ -874,9 +862,7 @@ class Main(Star):
                 continue
         return None
 
-    # 修复：添加 _execute_scheduled_task 方法，用于 schedule_message 工具
     async def _execute_scheduled_task(self, task_id: str, delay_seconds: float):
-        """执行定时任务（内部方法）"""
         try:
             await asyncio.sleep(delay_seconds)
             task = self.scheduled_tasks.get(task_id)
@@ -905,12 +891,15 @@ class Main(Star):
         """添加重要记忆到存储中。
         
         Args:
-            content(string): 记忆内容
+            content(string): 记忆内容（必填）
             tags(string): 标签，多个标签用逗号分隔
             importance(number): 重要程度，1-10
         """
+        if not content or content.strip() == "":
+            return "❌ 参数缺失：请提供记忆内容。\n用法示例：添加记忆 今天天气很好，标签 日常，重要度 8"
         user_id = event.get_sender_id()
         tags_list = [t.strip() for t in tags.split(",")] if tags else []
+        importance = max(1, min(10, importance))
         memory_id = await self.memory_manager.add_memory(user_id, content, tags_list, importance)
         return f"✅ 记忆已保存\nID: {memory_id}\n内容: {content[:50]}{'...' if len(content)>50 else ''}"
 
@@ -919,7 +908,7 @@ class Main(Star):
         """搜索记忆。
         
         Args:
-            keyword(string): 搜索关键词
+            keyword(string): 搜索关键词（可选，不提供则返回最新记忆）
             user_specific(boolean): 是否只搜索当前用户的记忆
             limit(number): 返回结果数量限制
         """
@@ -927,7 +916,9 @@ class Main(Star):
         limit = min(limit, 20)
         memories = await self.memory_manager.get_memories(user_id=user_id, keyword=keyword if keyword else None, limit=limit)
         if not memories:
-            return "📭 未找到相关记忆"
+            if keyword:
+                return f"📭 未找到包含「{keyword}」的记忆"
+            return "📭 暂无记忆"
         lines = [f"📚 找到 {len(memories)} 条记忆："]
         for i, m in enumerate(memories, 1):
             tags_str = f"[{', '.join(m.get('tags', []))}]" if m.get('tags') else ""
@@ -940,11 +931,13 @@ class Main(Star):
         """更新已有记忆。
         
         Args:
-            memory_id(string): 记忆ID
+            memory_id(string): 记忆ID（必填）
             content(string): 新的记忆内容
             tags(string): 新的标签，多个用逗号分隔
             importance(number): 新的重要程度1-10
         """
+        if not memory_id or memory_id.strip() == "":
+            return "❌ 参数缺失：请提供要更新的记忆ID。\n用法示例：更新记忆 abc123 内容 新内容 标签 重要 重要度 9"
         existing = await self.memory_manager.get_memory_by_id(memory_id)
         if not existing:
             return f"❌ 未找到记忆ID: {memory_id}"
@@ -957,8 +950,10 @@ class Main(Star):
         """删除指定记忆。
         
         Args:
-            memory_id(string): 要删除的记忆ID
+            memory_id(string): 要删除的记忆ID（必填）
         """
+        if not memory_id or memory_id.strip() == "":
+            return "❌ 参数缺失：请提供要删除的记忆ID。\n用法示例：删除记忆 abc123"
         existing = await self.memory_manager.get_memory_by_id(memory_id)
         if not existing:
             return f"❌ 未找到记忆ID: {memory_id}"
@@ -970,8 +965,10 @@ class Main(Star):
         """获取单条记忆详情。
         
         Args:
-            memory_id(string): 记忆ID
+            memory_id(string): 记忆ID（必填）
         """
+        if not memory_id or memory_id.strip() == "":
+            return "❌ 参数缺失：请提供记忆ID。\n用法示例：查看记忆 abc123"
         m = await self.memory_manager.get_memory_by_id(memory_id)
         if not m:
             return f"❌ 未找到记忆ID: {memory_id}"
@@ -989,13 +986,17 @@ class Main(Star):
 
     @filter.llm_tool(name="send_message")
     async def send_message_tool(self, event: AstrMessageEvent, target_id: str, message: str, chat_type: str = "auto") -> str:
-        """向指定的QQ好友或群聊发送消息。
+        """向指定的QQ好友或群聊发送消息（立即发送）。
         
         Args:
-            target_id(string): 目标QQ号或群号
-            message(string): 要发送的消息内容
+            target_id(string): 目标QQ号或群号（必填）
+            message(string): 要发送的消息内容（必填）
             chat_type(string): 聊天类型，可选值：group/private/auto
         """
+        if not target_id or target_id.strip() == "":
+            return "❌ 参数缺失：请提供目标QQ号或群号。\n用法示例：发送消息 123456 你好"
+        if not message or message.strip() == "":
+            return "❌ 参数缺失：请提供要发送的消息内容。\n用法示例：发送消息 123456 你好"
         client = await self._get_client(event)
         if not client:
             return "错误：无法获取客户端"
@@ -1008,7 +1009,6 @@ class Main(Star):
             chat_type = "group" if is_group else "private"
         try:
             if chat_type == "group":
-                # 直接使用 client 调用 API
                 await client.call_action('send_group_msg', group_id=int(target_id), message=message)
             else:
                 await client.call_action('send_private_msg', user_id=int(target_id), message=message)
@@ -1018,14 +1018,20 @@ class Main(Star):
 
     @filter.llm_tool(name="schedule_message")
     async def schedule_message(self, event: AstrMessageEvent, target_id: str, message: str, send_time: str, chat_type: str = "group") -> str:
-        """创建定时消息任务。
+        """【简单定时消息】仅发送文本消息，内存存储，重启后丢失。如需更复杂的功能（发空间、改状态、LLM提醒等），请使用 create_scheduled_command。
         
         Args:
-            target_id(string): 目标QQ号或群号
-            message(string): 要发送的消息内容
-            send_time(string): 发送时间，格式：YYYY-MM-DD HH:MM 或 HH:MM 或 每天的HH:MM
+            target_id(string): 目标QQ号或群号（必填）
+            message(string): 要发送的消息内容（必填）
+            send_time(string): 发送时间，格式：YYYY-MM-DD HH:MM 或 HH:MM 或 每天的HH:MM（必填）
             chat_type(string): 聊天类型，group或private
         """
+        if not target_id or target_id.strip() == "":
+            return "❌ 参数缺失：请提供目标QQ号或群号。\n用法示例：定时消息 123456 明天见 明天08:00"
+        if not message or message.strip() == "":
+            return "❌ 参数缺失：请提供要发送的消息内容。\n用法示例：定时消息 123456 明天见 明天08:00"
+        if not send_time or send_time.strip() == "":
+            return "❌ 参数缺失：请提供发送时间。\n支持格式：YYYY-MM-DD HH:MM、HH:MM、每天的HH:MM"
         client = await self._get_client(event)
         if not client:
             return "错误：无法获取客户端"
@@ -1034,27 +1040,28 @@ class Main(Star):
             return f"参数错误: {result}"
         parsed_time = self._parse_time(send_time)
         if not parsed_time:
-            return "错误：无法理解时间格式"
+            return "错误：无法理解时间格式，请使用如 明天08:00、2026-01-01 12:00、每天的08:00"
         if parsed_time <= datetime.now():
             return "错误：指定的时间已经过去"
         task_id = str(uuid.uuid4())[:8]
         task = ScheduledTask(task_id=task_id, target_id=target_id, message=message, send_time=parsed_time, chat_type=chat_type)
         self.scheduled_tasks[task_id] = task
         delay_seconds = (parsed_time - datetime.now()).total_seconds()
-        # 修复：使用 self._execute_scheduled_task 而不是不存在的方法
         asyncio_task = asyncio.create_task(self._execute_scheduled_task(task_id, delay_seconds))
         self.running_tasks[task_id] = asyncio_task
-        return f"✅ 定时任务已创建\n任务ID: {task_id}\n时间: {parsed_time.strftime('%Y-%m-%d %H:%M:%S')}"
+        return f"✅ 定时任务已创建\n任务ID: {task_id}\n时间: {parsed_time.strftime('%Y-%m-%d %H:%M:%S')}\n⚠️ 注意：此任务重启后丢失，如需持久化请使用 create_scheduled_command"
 
     @filter.llm_tool(name="cancel_scheduled_message")
     async def cancel_scheduled_message(self, event: AstrMessageEvent, task_id: str) -> str:
-        """取消定时消息任务。
+        """取消定时消息任务（仅适用于 schedule_message 创建的任务）。
         
         Args:
-            task_id(string): 要取消的任务ID
+            task_id(string): 要取消的任务ID（必填）
         """
+        if not task_id or task_id.strip() == "":
+            return "❌ 参数缺失：请提供任务ID。\n用法示例：取消定时任务 abc123"
         if task_id not in self.scheduled_tasks:
-            return f"错误：未找到任务"
+            return f"错误：未找到任务 {task_id}"
         task = self.scheduled_tasks[task_id]
         task.cancelled = True
         if task_id in self.running_tasks:
@@ -1066,18 +1073,18 @@ class Main(Star):
 
     @filter.llm_tool(name="list_scheduled_messages")
     async def list_scheduled_messages(self, event: AstrMessageEvent, show_all: bool = False) -> str:
-        """列出定时消息任务。
+        """列出定时消息任务（仅适用于 schedule_message 创建的任务）。
         
         Args:
             show_all(boolean): 是否显示所有任务（包括已完成和已取消的）
         """
         tasks = list(self.scheduled_tasks.values()) if show_all else [t for t in self.scheduled_tasks.values() if not t.cancelled and not t.completed]
         if not tasks:
-            return "当前没有定时任务"
-        lines = [f"📋 任务列表（{len(tasks)}个）"]
+            return "当前没有定时消息任务"
+        lines = [f"📋 定时消息任务列表（{len(tasks)}个）"]
         for t in sorted(tasks, key=lambda x: x.send_time):
             status = "✅" if t.completed else "❌" if t.cancelled else "⏳"
-            lines.append(f"{status} [{t.task_id}] {t.send_time.strftime('%m-%d %H:%M')}")
+            lines.append(f"{status} [{t.task_id}] {t.send_time.strftime('%m-%d %H:%M')} -> {t.target_id}")
         return "\n".join(lines)
 
     @filter.llm_tool(name="publish_qzone")
@@ -1085,10 +1092,16 @@ class Main(Star):
         """发布QQ空间说说。
         
         Args:
-            content(string): 说说内容
+            content(string): 说说内容（必填）
         """
-        if not await self._ensure_initialized(event):
-            return "错误：无法初始化QQ空间"
+        if not content or content.strip() == "":
+            return "❌ 参数缺失：请提供说说内容。\n用法示例：发表空间说说 今天天气真好"
+        client = await self._get_client(event)
+        if not client:
+            return "错误：无法获取客户端"
+        success = await self.session.initialize(client)
+        if not success:
+            return "错误：无法初始化QQ空间，请检查网络或重新登录"
         result = await self.qzone.publish_post(content)
         return result['msg']
 
@@ -1097,9 +1110,11 @@ class Main(Star):
         """发送戳一戳。
         
         Args:
-            target_qq(string): 目标QQ号
+            target_qq(string): 目标QQ号（必填）
             chat_type(string): 聊天类型，可选值：group/private/auto
         """
+        if not target_qq or target_qq.strip() == "":
+            return "❌ 参数缺失：请提供目标QQ号。\n用法示例：戳一戳 123456"
         client = await self._get_client(event)
         if not client:
             return "错误：无法获取客户端"
@@ -1110,7 +1125,6 @@ class Main(Star):
             chat_type = "private" if event.is_private_chat() else "group"
         try:
             if chat_type == "private":
-                # 直接使用 client 调用 API
                 await client.call_action('friend_poke', user_id=int(target_qq))
             else:
                 group_id = event.get_group_id()
@@ -1127,10 +1141,14 @@ class Main(Star):
         """设置QQ在线状态。
         
         Args:
-            status(string): 状态码，可选值：online/qme/away/busy/dnd/invisible/listening/sleeping/studying
-            duration_minutes(number): 状态持续时间（分钟）
+            status(string): 状态码，可选值：online/qme/away/busy/dnd/invisible/listening/sleeping/studying（必填）
+            duration_minutes(number): 状态持续时间（分钟）（必填）
             delay_minutes(number): 延迟执行时间（分钟）
         """
+        if not status or status.strip() == "":
+            return "❌ 参数缺失：请提供状态码。\n可用状态：online, qme, away, busy, dnd, invisible, listening, sleeping, studying"
+        if duration_minutes is None:
+            return "❌ 参数缺失：请提供持续时间（分钟）。\n用法示例：设置QQ状态 listening 30"
         client = await self._get_client(event)
         if not client:
             return "错误：无法获取客户端"
@@ -1151,22 +1169,28 @@ class Main(Star):
 
     @filter.llm_tool(name="create_scheduled_command")
     async def create_scheduled_command(self, event: AstrMessageEvent, command_type: str, execute_time: str, params: str, recurrence: str = "once") -> str:
-        """创建定时指令任务。
+        """【高级定时指令】持久化存储，支持重启恢复，可执行多种操作：qzone_post（发空间）、status_change（改状态）、llm_remind（LLM提醒）。注意：如需简单定时发消息，请使用 schedule_message。
         
         Args:
-            command_type(string): 指令类型，可选值：qzone_post/status_change/send_message/llm_remind
-            execute_time(string): 执行时间，格式：YYYY-MM-DD HH:MM 或 HH:MM 或 每天的HH:MM
-            params(string): 指令参数，JSON格式字符串
+            command_type(string): 指令类型，可选值：qzone_post/status_change/llm_remind（必填）
+            execute_time(string): 执行时间，格式：YYYY-MM-DD HH:MM 或 HH:MM 或 每天的HH:MM（必填）
+            params(string): 指令参数，JSON格式字符串（必填）
             recurrence(string): 重复类型，可选值：once/daily
         """
+        if not command_type or command_type.strip() == "":
+            return "❌ 参数缺失：请提供指令类型。\n可选：qzone_post, status_change, llm_remind"
+        if not execute_time or execute_time.strip() == "":
+            return "❌ 参数缺失：请提供执行时间。\n支持格式：YYYY-MM-DD HH:MM、HH:MM、每天的HH:MM"
+        if not params or params.strip() == "":
+            return "❌ 参数缺失：请提供指令参数（JSON格式）。\n例如：{\"content\": \"晚安\"}"
         parsed_time = self._parse_time(execute_time)
         if not parsed_time:
             return "错误：无法理解时间格式"
         try:
             params_dict = json.loads(params)
         except json.JSONDecodeError:
-            return "错误：params必须是有效JSON"
-        valid_types = ["qzone_post", "status_change", "send_message", "llm_remind"]
+            return "错误：params必须是有效JSON字符串"
+        valid_types = ["qzone_post", "status_change", "llm_remind"]
         if command_type not in valid_types:
             return f"错误：无效类型，可选: {', '.join(valid_types)}"
         session_info = None
@@ -1181,19 +1205,19 @@ class Main(Star):
         success = await self.db_manager.save_scheduled_command(task_id, command_type, params_dict, parsed_time, recurrence, session_info)
         if success and parsed_time > datetime.now():
             await self.command_executor.schedule_command(task_id, parsed_time, command_type, params_dict, session_info)
-        return f"✅ 定时指令已创建\n任务ID: {task_id}" if success else "❌ 保存失败"
+        return f"✅ 定时指令已创建\n任务ID: {task_id}\n此指令持久化存储，重启后仍会执行。" if success else "❌ 保存失败"
 
     @filter.llm_tool(name="list_scheduled_commands")
     async def list_scheduled_commands(self, event: AstrMessageEvent, include_executed: bool = False) -> str:
-        """列出定时指令任务。
+        """列出定时指令任务（仅适用于 create_scheduled_command 创建的任务）。
         
         Args:
             include_executed(boolean): 是否包含已执行的指令
         """
         commands = await self.db_manager.get_all_commands(include_executed)
         if not commands:
-            return "当前没有定时指令"
-        lines = [f"📋 指令列表（{len(commands)}条）"]
+            return "当前没有定时指令任务"
+        lines = [f"📋 定时指令列表（{len(commands)}条）"]
         for cmd in commands[:15]:
             status_map = {0: "⏳", 1: "✅", 2: "❌", -1: "⚠️"}
             status = status_map.get(cmd.get('executed'), "❓")
@@ -1203,22 +1227,26 @@ class Main(Star):
 
     @filter.llm_tool(name="cancel_scheduled_command")
     async def cancel_scheduled_command(self, event: AstrMessageEvent, task_id: str) -> str:
-        """取消定时指令任务。
+        """取消定时指令任务（仅适用于 create_scheduled_command 创建的任务）。
         
         Args:
-            task_id(string): 要取消的任务ID
+            task_id(string): 要取消的任务ID（必填）
         """
+        if not task_id or task_id.strip() == "":
+            return "❌ 参数缺失：请提供要取消的任务ID。\n用法示例：取消指令 abc123"
         await self.db_manager.cancel_command(task_id)
         self.command_executor.cancel_task(task_id)
         return f"✅ 已取消指令 {task_id}"
 
     @filter.llm_tool(name="delete_scheduled_command")
     async def delete_scheduled_command(self, event: AstrMessageEvent, task_id: str) -> str:
-        """彻底删除定时指令任务。
+        """彻底删除定时指令任务（仅适用于 create_scheduled_command 创建的任务）。
         
         Args:
-            task_id(string): 要删除的任务ID
+            task_id(string): 要删除的任务ID（必填）
         """
+        if not task_id or task_id.strip() == "":
+            return "❌ 参数缺失：请提供要删除的任务ID。\n用法示例：删除指令 abc123"
         await self.db_manager.delete_command(task_id)
         self.command_executor.cancel_task(task_id)
         return f"✅ 已删除指令 {task_id}"
@@ -1230,7 +1258,7 @@ class Main(Star):
             return "❌ 此功能仅支持群聊中使用"
         chain = event.get_messages()
         if not chain or len(chain)==0 or not isinstance(chain[0], Reply):
-            return "❌ 请引用要撤回的消息"
+            return "❌ 请引用要撤回的消息（回复消息时勾选引用）"
         msg_id = str(chain[0].id)
         if not msg_id.isdigit():
             return "❌ 引用的消息ID无效"
@@ -1238,7 +1266,6 @@ class Main(Star):
         if not group_id:
             return "❌ 无法获取群号"
         try:
-            # 直接使用 event.bot 调用 API
             await event.bot.call_action('delete_msg', message_id=int(msg_id), group_id=int(group_id))
             return f"✅ 撤回成功\n• 消息ID: {msg_id}"
         except Exception as e:
@@ -1249,52 +1276,115 @@ class Main(Star):
         """通过QQ邮箱SMTP服务发送电子邮件。
         
         Args:
-            to(string): 收件人邮箱地址
-            subject(string): 邮件主题
-            content(string): 邮件正文内容
+            to(string): 收件人邮箱地址（必填）
+            subject(string): 邮件主题（必填）
+            content(string): 邮件正文内容（必填）
             nickname(string): 发件人昵称
         """
-        if isinstance(to, list):
-            if len(to) > 0:
-                to = to[0]
-            else:
-                return "❌ 收件人列表为空"
-        if not isinstance(to, str):
-            to = str(to)
-        to = to.strip()
-        if not to:
-            return "❌ 收件人邮箱不能为空"
-        logger.info(f"[send_qq_email] 收到参数: to={to}, subject={subject}, nickname={nickname}")
+        if not to or to.strip() == "":
+            return "❌ 参数缺失：请提供收件人邮箱地址。\n用法示例：发送邮件 friend@qq.com 测试 你好"
+        if not subject or subject.strip() == "":
+            return "❌ 参数缺失：请提供邮件主题。\n用法示例：发送邮件 friend@qq.com 测试 你好"
+        if not content or content.strip() == "":
+            return "❌ 参数缺失：请提供邮件正文内容。\n用法示例：发送邮件 friend@qq.com 测试 你好"
         result = await self.email_sender.send_email(to, subject, content, nickname)
         return result["msg"]
 
-    # ==================== 提示词注入 ====================
-    @filter.on_llm_request()
-    async def on_llm_request(self, event: AstrMessageEvent, request: Any, *args, **kwargs) -> None:
-        try:
-            status_desc = self.status_manager.get_current_status_desc()
-            inject_parts = [f"[系统状态] {status_desc}"]
-            if self.config.get("enabled", True) and event.get_platform_name() in ["aiocqhttp", "qq"] and self.config.get("memory_inject_enabled", True):
-                user_id = event.get_sender_id()
-                max_memories = self.config.get("max_inject_memories", 5)
-                memories = await self.memory_manager.get_latest_memories_for_inject(user_id, max_memories)
-                if memories:
-                    memory_lines = [f"[用户历史记忆] 该用户({user_id})的重要信息："]
-                    for i, m in enumerate(memories, 1):
-                        tags = f"[{', '.join(m.get('tags', []))}]" if m.get('tags') else ""
-                        content = m.get('content', '').replace('\n', ' ').replace('\r', '')
-                        memory_lines.append(f"{i}. {content} {tags}")
-                    inject_parts.append("\n".join(memory_lines))
-            if inject_parts:
-                inject_text = "\n".join(inject_parts)
-                if hasattr(request, 'system_prompt') and request.system_prompt:
-                    request.system_prompt += f"\n{inject_text}\n"
-                elif hasattr(request, 'system_prompt'):
-                    request.system_prompt = inject_text + "\n"
-        except Exception as e:
-            logger.error(f"[MemoryInject] 注入失败: {e}")
+    # ==================== 联系人搜索与列表工具 ====================
 
-    # ==================== 管理员指令（/tool_xxx） ====================
+    @filter.llm_tool(name="search_contacts")
+    async def search_contacts(self, event: AstrMessageEvent, keyword: str = "", search_type: str = "all") -> str:
+        """搜索QQ好友或群聊，支持按QQ号、昵称、群名模糊匹配。
+        
+        Args:
+            keyword(string): 搜索关键词（必填）
+            search_type(string): 搜索范围，可选值：all(全部)/friend(好友)/group(群聊)
+        """
+        if not keyword or keyword.strip() == "":
+            return "❌ 参数缺失：请提供搜索关键词（可以是QQ号、昵称或群名的一部分）。\n用法示例：搜索联系人 张三"
+        if not self.config.get("search_enabled", True):
+            return "联系人搜索功能已禁用"
+        client = await self._get_client(event)
+        if not client:
+            return "错误：无法获取客户端"
+        await self._update_contacts_cache(client)
+        max_chars = self.config.get("search_max_chars", 800)
+        results = []
+        keyword_lower = keyword.lower().strip()
+        if search_type in ("all", "friend"):
+            for friend in self._friends_cache:
+                user_id = str(friend.get('user_id', ''))
+                nickname = friend.get('nickname', '')
+                remark = friend.get('remark', '')
+                match = False
+                if keyword_lower:
+                    if keyword_lower in user_id or keyword_lower in nickname.lower() or keyword_lower in remark.lower():
+                        match = True
+                else:
+                    match = True
+                if match:
+                    display_name = remark if remark else nickname
+                    results.append(f"👤 好友 | {user_id} | {display_name}")
+        if search_type in ("all", "group"):
+            for group in self._groups_cache:
+                group_id = str(group.get('group_id', ''))
+                group_name = group.get('group_name', '')
+                match = False
+                if keyword_lower:
+                    if keyword_lower in group_id or keyword_lower in group_name.lower():
+                        match = True
+                else:
+                    match = True
+                if match:
+                    results.append(f"👥 群聊 | {group_id} | {group_name}")
+        if not results:
+            return f"未找到与「{keyword}」相关的联系人"
+        output = f"📇 搜索结果（共{len(results)}项）：\n" + "\n".join(results)
+        if len(output) > max_chars:
+            output = output[:max_chars] + f"\n... (仅显示部分，共{len(results)}项，建议使用更精确的关键词)"
+        return output
+
+    @filter.llm_tool(name="list_contacts")
+    async def list_contacts(self, event: AstrMessageEvent, contact_type: str = "all", limit: int = 20) -> str:
+        """获取好友或群聊列表（不进行模糊搜索，直接列出）。
+        
+        Args:
+            contact_type(string): 类型，可选值：all/friend/group
+            limit(number): 返回的最大数量，默认20
+        """
+        if not self.config.get("search_enabled", True):
+            return "联系人列表功能已禁用"
+        client = await self._get_client(event)
+        if not client:
+            return "错误：无法获取客户端"
+        await self._update_contacts_cache(client)
+        max_chars = self.config.get("search_max_chars", 800)
+        limit = min(limit, 100)
+        lines = []
+        if contact_type in ("all", "friend"):
+            friends = self._friends_cache[:limit]
+            for f in friends:
+                user_id = f.get('user_id', '')
+                name = f.get('remark') or f.get('nickname', '')
+                lines.append(f"👤 {user_id} | {name}")
+            if contact_type == "friend":
+                lines.insert(0, f"📋 好友列表（共{len(self._friends_cache)}，显示{len(friends)}）：")
+        if contact_type in ("all", "group"):
+            groups = self._groups_cache[:limit]
+            for g in groups:
+                group_id = g.get('group_id', '')
+                name = g.get('group_name', '')
+                lines.append(f"👥 {group_id} | {name}")
+            if contact_type == "group":
+                lines.insert(0, f"📋 群聊列表（共{len(self._groups_cache)}，显示{len(groups)}）：")
+        if not lines:
+            return "暂无联系人数据"
+        output = "\n".join(lines)
+        if len(output) > max_chars:
+            output = output[:max_chars] + "\n... (内容过长已截断)"
+        return output
+
+    # ==================== 管理员指令 ====================
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("tool_memory")
     async def admin_memory(self, event: AstrMessageEvent):
@@ -1497,3 +1587,55 @@ class Main(Star):
         task_id = args[1]
         result = await self.delete_scheduled_command(event, task_id)
         await event.send(MessageChain().message(result))
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("tool_search")
+    async def admin_search(self, event: AstrMessageEvent):
+        args = event.message_str.strip().split(maxsplit=2)
+        if len(args) < 2:
+            await event.send(MessageChain().message("用法：/tool_search <关键词> [类型]  类型可选：all/friend/group"))
+            return
+        keyword = args[1]
+        search_type = args[2] if len(args) > 2 else "all"
+        result = await self.search_contacts(event, keyword, search_type)
+        await event.send(MessageChain().message(result))
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("tool_list")
+    async def admin_list(self, event: AstrMessageEvent):
+        args = event.message_str.strip().split()
+        contact_type = args[1] if len(args) > 1 else "all"
+        limit = int(args[2]) if len(args) > 2 and args[2].isdigit() else 20
+        result = await self.list_contacts(event, contact_type, limit)
+        await event.send(MessageChain().message(result))
+
+    # ==================== 提示词注入（仅状态和记忆） ====================
+    @filter.on_llm_request()
+    async def on_llm_request(self, event: AstrMessageEvent, request: Any, *args, **kwargs) -> None:
+        try:
+            inject_parts = []
+            # 状态注入
+            status_desc = self.status_manager.get_current_status_desc()
+            inject_parts.append(f"[系统状态] {status_desc}")
+            
+            # 记忆注入
+            if self.config.get("enabled", True) and event.get_platform_name() in ["aiocqhttp", "qq"] and self.config.get("memory_inject_enabled", True):
+                user_id = event.get_sender_id()
+                max_memories = self.config.get("max_inject_memories", 5)
+                memories = await self.memory_manager.get_latest_memories_for_inject(user_id, max_memories)
+                if memories:
+                    memory_lines = [f"[用户历史记忆] 该用户({user_id})的重要信息："]
+                    for i, m in enumerate(memories, 1):
+                        tags = f"[{', '.join(m.get('tags', []))}]" if m.get('tags') else ""
+                        content = m.get('content', '').replace('\n', ' ').replace('\r', '')
+                        memory_lines.append(f"{i}. {content} {tags}")
+                    inject_parts.append("\n".join(memory_lines))
+            
+            if inject_parts:
+                inject_text = "\n".join(inject_parts)
+                if hasattr(request, 'system_prompt') and request.system_prompt:
+                    request.system_prompt += f"\n{inject_text}\n"
+                elif hasattr(request, 'system_prompt'):
+                    request.system_prompt = inject_text + "\n"
+        except Exception as e:
+            logger.error(f"[注入] 失败: {e}")
