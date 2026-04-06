@@ -56,5 +56,16 @@
     "description": "SMTP端口（SSL）",
     "type": "int",
     "default": 465
+  },
+  "search_max_chars": {
+    "description": "搜索联系人返回的最大字符数，避免token消耗过多",
+    "type": "int",
+    "default": 800,
+    "hint": "建议500-1000"
+  },
+  "search_enabled": {
+    "description": "是否启用联系人搜索功能",
+    "type": "bool",
+    "default": true
   }
 }
