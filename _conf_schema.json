@@ -46,6 +46,24 @@
     "default": true,
     "hint": "开启后，LLM可以知道当前用户在群内的身份"
   },
+  "group_manage_enabled": {
+    "description": "是否启用群管理功能（禁言、公告、精华、查文件、处理申请、删除文件）",
+    "type": "bool",
+    "default": true,
+    "hint": "关闭后所有群管理相关工具和指令将不可用"
+  },
+  "kick_enabled": {
+    "description": "是否允许踢人操作（受 group_manage_enabled 总开关影响）",
+    "type": "bool",
+    "default": true,
+    "hint": "单独控制踢人功能，避免误操作"
+  },
+  "max_output_chars": {
+    "description": "限制工具返回内容的最大字符数，避免超出模型上下文限制（包括群成员列表、好友列表、群文件列表等）",
+    "type": "int",
+    "default": 2000,
+    "hint": "建议1500-3000，设为0表示不限制"
+  },
   "email_sender": {
     "description": "发件人QQ邮箱地址",
     "type": "string",
