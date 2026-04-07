@@ -251,7 +251,7 @@ LLM：调用 send_email(recipient="admin@example.com", subject="HTML邮件", bod
 
 ## 更新日志
 
-### v1.2.5 （当前版本）
+### v1.3.0 （当前版本）
 - ✨ 新增：支持了群成员关系获取/注入功能
 - 🤫 修复了已知问题
 
