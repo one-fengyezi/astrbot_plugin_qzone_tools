@@ -1,4 +1,78 @@
-##[1.4.0] - 2026-04-08
+## [2.0.0] - 2026-04-09 （当前版本）
+
+### ✨ 新增
+
+- **AI 声聊功能**：基于 NapCat AI 扩展接口实现在群内发送 AI 语音消息
+  - 新增 `get_ai_characters` LLM 工具，用于获取当前可用的 AI 语音角色列表
+  - 新增 `send_ai_voice` LLM 工具，支持在群聊中指定角色朗读文本
+  - 新增 `/ai_characters` 管理员指令，查看所有可用角色及 ID
+  - 新增 `/ai_voice` 管理员指令，手动发送 AI 语音消息
+  - 配置文件中新增 `ai_voice_default_character` 选项，可预设默认音色
+  - 配置文件中新增 `ai_voice_max_text_length` 选项，限制单次文本长度（默认500字符）
+  - 内置角色列表缓存机制，有效期10分钟，减少重复 API 调用
+
+- **群管理功能大幅扩展**：补全 NapCat 协议中常用群管接口
+  - 新增 `set_group_admin` 工具，用于设置或取消群管理员
+  - 新增 `set_group_name` 工具，修改群名称（需机器人有对应权限）
+  - 新增 `get_group_notice_list` 工具，获取群公告列表
+  - 新增 `upload_group_file` 工具，上传本地文件到群文件
+  - 新增 `create_group_file_folder` 工具，在群文件根目录创建文件夹
+  - 新增 `delete_group_folder` 工具，删除群文件夹（含内部所有文件）
+  - 新增 `get_group_honor_info` 工具，查询群荣誉（龙王、群聊之火等）
+  - 新增 `get_group_at_all_remain` 工具，查询 @全体成员 剩余次数
+  - 新增 `set_group_special_title` 工具，设置群成员专属头衔（群主权限）
+  - 新增 `get_group_shut_list` 工具，获取当前被禁言的成员列表
+  - 新增 `get_group_ignore_add_request` 工具，查看被忽略的加群请求
+  - 新增 `set_group_add_option` 工具，修改加群方式（允许/需验证/禁止）
+  - 新增 `send_group_sign` 工具，执行群打卡操作
+  - 对应管理员指令同步添加（`/set_admin`、`/set_group_name`、`/list_notices` 等13个新指令）
+
+- **智能交互增强**
+  - 新增 `get_user_group_role` 工具，查询指定用户在群内的身份（群主/管理员/成员）
+  - 新增 `list_contacts` 工具，直接列出好友或群聊列表，无需关键词搜索
+  - 新增 `search_contacts` 工具，支持按 QQ 号、昵称、群名模糊搜索联系人
+
+- **定时任务系统**
+  - 新增 `create_scheduled_command` 高级定时指令，持久化存储并支持重启恢复
+  - 支持三种操作类型：发空间说说、修改在线状态、LLM 提醒
+  - 新增 `list_scheduled_commands`、`cancel_scheduled_command`、`delete_scheduled_command` 配套工具
+
+- **记忆系统**
+  - 新增 `add_memory`、`search_memories`、`update_memory`、`delete_memory`、`get_memory_detail` 五个 LLM 工具
+  - 支持为记忆添加标签、设置重要度，并自动清理超量记忆
+
+- **邮件发送**
+  - 新增 `send_qq_email` 工具，通过 QQ 邮箱 SMTP 发送邮件
+  - 配置项支持发件人、授权码、SMTP 服务器和端口
+
+- **QQ 空间功能**
+  - 新增 `publish_qzone` 工具，发布 QQ 空间说说
+  - 自动获取并维护 cookie 和 g_tk，支持定时发布
+
+### 🔧 优化
+
+- **客户端获取逻辑重构**：优先从事件中获取 `bot` 实例，确保群管操作使用正确的会话权限，解决因缓存客户端导致的 `1010` 权限不足错误
+- **输出内容自动截断**：所有可能返回大量数据的工具（如成员列表、文件列表）均已加入 `max_output_chars` 限制，避免超出 LLM 上下文窗口
+- **群角色自动注入**：在群聊中自动将用户身份（成员/管理员/群主）注入 LLM 系统提示词，提升 AI 对权限情境的感知
+- **配置文件完善**：新增 `_conf_schema.json` 完整配置项，支持在 WebUI 中可视化编辑所有插件设置
+
+### 🐛 修复
+
+- 修复 AI 语音接口调用失败的问题：参照正常工作的插件，增加了 `chat_type=1` 参数、文本长度限制和超时设置
+- 修复 `set_group_name` 等群管接口因客户端实例错误导致的权限异常
+- 修复联系人缓存过期后无法自动刷新的问题
+
+### ⚠️ 破坏性变更
+
+- 插件数据目录更名为 `astrbot_plugin_qzone_tools`（如需保留旧数据，请手动迁移）
+- 部分 LLM 工具的参数名称与旧版本可能不一致，请重新配置 LLM 调用
+
+### 📚 文档
+
+- 新增 `/tool_all_help` 管理员总帮助指令，分类展示所有可用命令
+- 各 LLM 工具和指令均添加了详细的参数说明和用法示例
+
+## [1.4.0] - 2026-04-08
 
 ### ✨ 新增
 
