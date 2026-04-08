@@ -2026,7 +2026,7 @@ class Main(Star):
         except Exception as e:
             return {"status": "error", "message": f"打卡失败: {str(e)}"}
 
-    # ==================== 新增 LLM 工具：AI 声聊（参照正常工作插件） ====================
+    # ==================== 新增 LLM 工具：AI 声聊（优化描述及注入默认值） ====================
     async def _get_ai_characters_raw(self, event: AstrMessageEvent, group_id: str) -> list:
         """获取原始角色列表数据（带缓存，有效期10分钟）"""
         cache_key = f"ai_characters_{group_id}"
@@ -2072,7 +2072,7 @@ class Main(Star):
 
     @filter.llm_tool(name="get_ai_characters")
     async def get_ai_characters_tool(self, event: AstrMessageEvent) -> dict:
-        """获取当前可用的 AI 语音角色列表。在发送 AI 语音前可调用此工具了解可选角色。
+        """获取当前可用的 AI 语音角色列表。仅在需要了解可选角色时调用，通常发送语音时无需调用此工具。
         
         Returns:
             dict: 角色列表，包含角色ID和名称
@@ -2095,11 +2095,11 @@ class Main(Star):
 
     @filter.llm_tool(name="send_ai_voice")
     async def send_ai_voice_tool(self, event: AiocqhttpMessageEvent, text: str, character: str = "") -> dict:
-        """在群聊中发送 AI 语音消息（使用指定角色的音色朗读文本）。
+        """在群聊中发送 AI 语音消息。如果不指定角色，插件会自动使用配置中预设的默认音色，或自动选择第一个可用角色。因此绝大多数情况下你可以省略 character 参数直接调用本工具，无需先调用 get_ai_characters。
         
         Args:
             text(string): 要转换为语音的文本内容，必填
-            character(string): AI 角色ID或名称，可选。若不填则使用配置文件中的默认角色或自动选择第一个可用角色
+            character(string): AI 角色ID或名称，强烈建议留空以使用默认配置。仅在需要临时切换音色时才需填写。
         
         Returns:
             dict: 发送结果
@@ -2834,7 +2834,7 @@ class Main(Star):
         result = await self.send_group_sign(event)
         await event.send(MessageChain().message(result.get("message", "操作失败")))
 
-    # ==================== 提示词注入（状态 + 记忆 + 群角色） ====================
+    # ==================== 提示词注入（状态 + 记忆 + 群角色 + AI默认音色） ====================
     @filter.on_llm_request()
     async def on_llm_request(self, event: AstrMessageEvent, request: Any, *args, **kwargs) -> None:
         try:
@@ -2865,6 +2865,12 @@ class Main(Star):
                         role = await self._get_group_member_role(group_id, user_id)
                         if role != "unknown":
                             inject_parts.append(f"[当前群身份] 用户 {user_id} 在本群({group_id})的身份是：{role}")
+
+            # AI声聊默认配置注入（帮助LLM直接使用默认音色）
+            if self.ai_default_character:
+                inject_parts.append(f"[AI语音配置] 默认角色ID为 '{self.ai_default_character}'。调用 send_ai_voice 时若未指定角色，将自动使用此默认值，无需先调用 get_ai_characters。")
+            else:
+                inject_parts.append("[AI语音配置] 未设置默认角色。调用 send_ai_voice 时若未指定角色，将自动选择第一个可用角色。")
 
             if inject_parts:
                 inject_text = "\n".join(inject_parts)
