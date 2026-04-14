@@ -1790,10 +1790,19 @@ class Main(Star):
         available_tools = self._get_available_tools()
         if not tool_name or tool_name not in available_tools:
             return {"status": "error", "message": f"无效的工具名称或工具未启用: {tool_name}。请先使用 search_wyc_tools 或 call_wyc_tools 获取可用工具。"}
+        
+        # ===== 修复点：兼容 dict 类型的 tool_args =====
         try:
-            args_dict = json.loads(tool_args) if tool_args else {}
+            if isinstance(tool_args, dict):
+                args_dict = tool_args
+            elif isinstance(tool_args, str):
+                args_dict = json.loads(tool_args) if tool_args else {}
+            else:
+                return {"status": "error", "message": "参数格式错误，必须是 JSON 字符串或字典。"}
         except json.JSONDecodeError:
             return {"status": "error", "message": "参数格式错误，必须是有效的 JSON 字符串。"}
+        # =============================================
+        
         handler = available_tools[tool_name]["handler"]
         try:
             result = await handler(event, **args_dict)
